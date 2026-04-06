@@ -1098,7 +1098,7 @@ function DexPage({ wallet }) {
 // ─────────────────────────────────────────────
 const BRIDGE_CONTRACTS = {
   BSC:     { address: '0x06436bf6E71964A99bD4078043aa4cDfA0eadEe6', chainId: '0x38', name: 'BNB Chain',  symbol: 'BNB',  explorer: 'https://bscscan.com/tx/' },
-  ETH:     { address: '0xc3Da43E208388c8e24F2339f8D032B7254f3B9d6', chainId: '0x1',  name: 'Ethereum', symbol: 'ETH',  explorer: 'https://etherscan.io/tx/' },
+  ETH:     { address: '0x92E83A72b3CD6d699cc8F16D756d5f31aCF55659', chainId: '0x1',  name: 'Ethereum', symbol: 'ETH',  explorer: 'https://etherscan.io/tx/' },
   Polygon: { address: '0x19D2A913a6df973a7ad600F420960235307c6Cbf', chainId: '0x89', name: 'Polygon',  symbol: 'MATIC', explorer: 'https://polygonscan.com/tx/' },
 };
 

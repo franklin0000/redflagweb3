@@ -1094,10 +1094,170 @@ function DexPage({ wallet }) {
 }
 
 // ─────────────────────────────────────────────
+// BRIDGE PAGE
+// ─────────────────────────────────────────────
+const BRIDGE_CONTRACTS = {
+  BSC:     { address: '0xc3Da43E208388c8e24F2339f8D032B7254f3B9d6', chainId: '0x38', name: 'BNB Chain',  symbol: 'BNB',  explorer: 'https://bscscan.com/tx/' },
+  ETH:     { address: '0xc3Da43E208388c8e24F2339f8D032B7254f3B9d6', chainId: '0x1',  name: 'Ethereum', symbol: 'ETH',  explorer: 'https://etherscan.io/tx/' },
+  Polygon: { address: '0x19D2A913a6df973a7ad600F420960235307c6Cbf', chainId: '0x89', name: 'Polygon',  symbol: 'MATIC', explorer: 'https://polygonscan.com/tx/' },
+};
+
+const LOCK_ABI = [{
+  name: 'lock', type: 'function', stateMutability: 'payable',
+  inputs: [{ name: 'rfAddress', type: 'string' }],
+  outputs: [],
+}];
+
+function encodelock(rfAddress) {
+  // ABI encode: lock(string rfAddress)
+  // selector: keccak256("lock(string)")[0:4]
+  const selector = '0xf83d08ba';
+  const enc = new TextEncoder();
+  const strBytes = enc.encode(rfAddress);
+  const len = strBytes.length;
+  // offset (32 bytes) + length (32 bytes) + data (padded to 32)
+  const pad = n => n.toString(16).padStart(64, '0');
+  const dataHex = Array.from(strBytes).map(b => b.toString(16).padStart(2,'0')).join('');
+  const padded = dataHex.padEnd(Math.ceil(len / 32) * 64, '0');
+  return selector + pad(32) + pad(len) + padded;
+}
+
+function BridgePage({ wallet }) {
+  const [chain, setChain]     = useState('BSC');
+  const [amount, setAmount]   = useState('');
+  const [rfAddr, setRfAddr]   = useState(wallet?.address || '');
+  const [status, setStatus]   = useState('');
+  const [txHash, setTxHash]   = useState('');
+  const [loading, setLoading] = useState(false);
+  const [mmAddr, setMmAddr]   = useState('');
+
+  const cfg = BRIDGE_CONTRACTS[chain];
+
+  async function connectMeta() {
+    if (!window.ethereum) { setStatus('MetaMask no detectado. Instálalo en metamask.io'); return; }
+    try {
+      const accounts = await window.ethereum.request({ method: 'eth_requestAccounts' });
+      setMmAddr(accounts[0]);
+      setStatus('MetaMask conectado: ' + accounts[0].slice(0,10) + '…');
+    } catch (e) { setStatus('Error: ' + e.message); }
+  }
+
+  async function switchChain() {
+    try {
+      await window.ethereum.request({ method: 'wallet_switchEthereumChain', params: [{ chainId: cfg.chainId }] });
+    } catch (e) {
+      if (e.code === 4902) {
+        const rpcMap = { '0x38': 'https://bsc-dataseed.binance.org', '0x89': 'https://polygon-rpc.com' };
+        const nameMap = { '0x38': 'BNB Smart Chain', '0x89': 'Polygon Mainnet' };
+        await window.ethereum.request({ method: 'wallet_addEthereumChain', params: [{
+          chainId: cfg.chainId, chainName: nameMap[cfg.chainId] || cfg.name,
+          rpcUrls: [rpcMap[cfg.chainId] || 'https://mainnet.infura.io/v3/'],
+          nativeCurrency: { name: cfg.symbol, symbol: cfg.symbol, decimals: 18 },
+        }]});
+      }
+    }
+  }
+
+  async function doBridge() {
+    if (!window.ethereum)        { setStatus('Instala MetaMask'); return; }
+    if (!mmAddr)                  { setStatus('Conecta MetaMask primero'); return; }
+    if (!rfAddr || rfAddr.length < 16) { setStatus('Dirección RF inválida (muy corta)'); return; }
+    const amtNum = parseFloat(amount);
+    if (!amount || isNaN(amtNum) || amtNum <= 0) { setStatus('Introduce una cantidad válida'); return; }
+
+    setLoading(true); setStatus('Cambiando de red…'); setTxHash('');
+    try {
+      await switchChain();
+      const weiHex = '0x' + BigInt(Math.round(amtNum * 1e18)).toString(16);
+      const data   = encodelock(rfAddr);
+      setStatus('Confirmando en MetaMask…');
+      const hash = await window.ethereum.request({
+        method: 'eth_sendTransaction',
+        params: [{ from: mmAddr, to: cfg.address, value: weiHex, data }],
+      });
+      setTxHash(hash);
+      setStatus('✅ TX enviada. El bridge acreditará RF en ~1-2 min.');
+    } catch (e) {
+      setStatus('Error: ' + (e.message || JSON.stringify(e)));
+    } finally { setLoading(false); }
+  }
+
+  return (
+    <div style={{maxWidth:480,margin:'0 auto',display:'flex',flexDirection:'column',gap:16}}>
+      <div className="card fi">
+        <div style={{fontWeight:700,fontSize:16,marginBottom:4}}>🌉 Bridge → redflag.web3</div>
+        <div style={{fontSize:12,color:'var(--txl)'}}>Bloquea ETH/BNB/MATIC y recibe RF en tu wallet</div>
+      </div>
+
+      {/* Chain selector */}
+      <div className="card fi" style={{gap:12}}>
+        <div style={{fontSize:12,color:'var(--txl)',fontWeight:600}}>RED ORIGEN</div>
+        <div style={{display:'flex',gap:8}}>
+          {Object.keys(BRIDGE_CONTRACTS).map(c=>(
+            <button key={c} onClick={()=>setChain(c)}
+              style={{flex:1,padding:'8px 4px',borderRadius:8,border:`1.5px solid ${chain===c?'var(--cyan)':'var(--bdr)'}`,
+                background:chain===c?'rgba(0,220,255,.08)':'transparent',color:chain===c?'var(--cyan)':'var(--txl)',
+                cursor:'pointer',fontSize:13,fontWeight:chain===c?700:400}}>
+              {BRIDGE_CONTRACTS[c].symbol}
+            </button>
+          ))}
+        </div>
+        <div style={{fontSize:11,color:'var(--txl)'}}>
+          Contrato: <span style={{fontFamily:'monospace'}}>{cfg.address.slice(0,18)}…</span>
+        </div>
+      </div>
+
+      {/* MetaMask */}
+      <div className="card fi" style={{gap:10}}>
+        <div style={{fontSize:12,color:'var(--txl)',fontWeight:600}}>METAMASK</div>
+        {mmAddr
+          ? <div style={{fontSize:12,color:'var(--green)'}}>✅ {mmAddr.slice(0,16)}…{mmAddr.slice(-6)}</div>
+          : <button className="btn" onClick={connectMeta} style={{width:'100%'}}>Conectar MetaMask</button>
+        }
+      </div>
+
+      {/* Inputs */}
+      <div className="card fi" style={{gap:12}}>
+        <div style={{fontSize:12,color:'var(--txl)',fontWeight:600}}>CANTIDAD ({cfg.symbol})</div>
+        <input className="inp" type="number" placeholder={`0.01 ${cfg.symbol}`} value={amount}
+          onChange={e=>setAmount(e.target.value)} min="0" step="0.001"/>
+        <div style={{fontSize:12,color:'var(--txl)',fontWeight:600}}>TU DIRECCIÓN RF (destino)</div>
+        <input className="inp" placeholder="Tu dirección redflag.web3" value={rfAddr}
+          onChange={e=>setRfAddr(e.target.value)} style={{fontFamily:'monospace',fontSize:11}}/>
+        <div style={{fontSize:11,color:'var(--txl)'}}>
+          Tu dirección RF: <span style={{fontFamily:'monospace',color:'var(--cyan)',cursor:'pointer'}}
+            onClick={()=>setRfAddr(wallet?.address||'')}>{wallet?.address ? short(wallet.address,12) : '—'} (click para usar)</span>
+        </div>
+      </div>
+
+      {/* Send */}
+      <button className="btn" onClick={doBridge} disabled={loading || !mmAddr}
+        style={{width:'100%',padding:'12px',fontSize:15,opacity:loading||!mmAddr?0.5:1}}>
+        {loading ? 'Procesando…' : `Enviar ${amount||'0'} ${cfg.symbol} → RF`}
+      </button>
+
+      {/* Status */}
+      {status && (
+        <div style={{background:'rgba(0,220,255,.06)',border:'1px solid var(--bdr)',borderRadius:8,padding:'10px 14px',fontSize:12,color:status.startsWith('✅')?'var(--green)':'var(--txl)'}}>
+          {status}
+          {txHash && (
+            <div style={{marginTop:6}}>
+              <a href={cfg.explorer + txHash} target="_blank" rel="noreferrer"
+                style={{color:'var(--cyan)',fontSize:11}}>Ver en explorer →</a>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────
 const PAGES = [
   {id:'wallet',   label:'Wallet',      icon:Wallet},
   {id:'dashboard',label:'Dashboard',   icon:Activity},
-  {id:'dex',      label:'DEX Trading', icon:ArrowLeftRight},
+  {id:'bridge',   label:'Bridge',      icon:ArrowLeftRight},
+  {id:'dex',      label:'DEX Trading', icon:TrendingUp},
   {id:'explorer', label:'Explorer',    icon:Search},
   {id:'network',  label:'Network',     icon:Globe},
   {id:'settings', label:'Settings',    icon:Settings},
@@ -1207,6 +1367,7 @@ export default function App() {
         <div className="page">
           {page==='wallet'    && <WalletPage    wallet={wallet} wsData={wsData}/>}
           {page==='dashboard' && <DashboardPage stats={stats} vertices={vertices} mempool={mempool} roundEk={roundEk} tpsHist={tpsHist} online={online}/>}
+          {page==='bridge'    && <BridgePage    wallet={wallet}/>}
           {page==='dex'       && <DexPage       wallet={wallet}/>}
           {page==='explorer'  && <ExplorerPage/>}
           {page==='network'   && <NetworkPage   stats={stats} online={online}/>}

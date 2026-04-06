@@ -3,47 +3,46 @@ use serde::{Serialize, Deserialize};
 /// Cadenas EVM soportadas
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]
 pub enum EvmChain {
-    EthereumSepolia,
-    BscTestnet,
-    PolygonAmoy,
-    // Agregar más cadenas aquí
+    EthereumMainnet,
+    BscMainnet,
+    PolygonMainnet,
 }
 
 impl EvmChain {
     pub fn chain_id(&self) -> u64 {
         match self {
-            Self::EthereumSepolia => 11155111,
-            Self::BscTestnet      => 97,
-            Self::PolygonAmoy     => 80002,
+            Self::EthereumMainnet => 1,
+            Self::BscMainnet      => 56,
+            Self::PolygonMainnet  => 137,
         }
     }
 
     pub fn name(&self) -> &'static str {
         match self {
-            Self::EthereumSepolia => "Ethereum Sepolia",
-            Self::BscTestnet      => "BSC Testnet",
-            Self::PolygonAmoy     => "Polygon Amoy",
+            Self::EthereumMainnet => "Ethereum Mainnet",
+            Self::BscMainnet      => "BSC Mainnet",
+            Self::PolygonMainnet  => "Polygon Mainnet",
         }
     }
 
     pub fn rpc_env_var(&self) -> &'static str {
         match self {
-            Self::EthereumSepolia => "ETH_SEPOLIA_RPC",
-            Self::BscTestnet      => "BSC_TESTNET_RPC",
-            Self::PolygonAmoy     => "POLYGON_AMOY_RPC",
+            Self::EthereumMainnet => "ETH_MAINNET_RPC",
+            Self::BscMainnet      => "BSC_MAINNET_RPC",
+            Self::PolygonMainnet  => "POLYGON_MAINNET_RPC",
         }
     }
 
     pub fn contract_env_var(&self) -> &'static str {
         match self {
-            Self::EthereumSepolia => "ETH_SEPOLIA_BRIDGE_CONTRACT",
-            Self::BscTestnet      => "BSC_TESTNET_BRIDGE_CONTRACT",
-            Self::PolygonAmoy     => "POLYGON_AMOY_BRIDGE_CONTRACT",
+            Self::EthereumMainnet => "ETH_MAINNET_BRIDGE_CONTRACT",
+            Self::BscMainnet      => "BSC_MAINNET_BRIDGE_CONTRACT",
+            Self::PolygonMainnet  => "POLYGON_MAINNET_BRIDGE_CONTRACT",
         }
     }
 
     pub fn all() -> Vec<EvmChain> {
-        vec![Self::EthereumSepolia, Self::BscTestnet, Self::PolygonAmoy]
+        vec![Self::EthereumMainnet, Self::BscMainnet, Self::PolygonMainnet]
     }
 }
 

@@ -16,13 +16,13 @@ async fn main() -> anyhow::Result<()> {
 
     println!("╔══════════════════════════════════════════════════╗");
     println!("║   RedFlag 2.1 — Cross-Chain Bridge Relayer       ║");
-    println!("║   EVM (Sepolia/BSC/Polygon) ↔ RedFlag            ║");
+    println!("║   EVM (ETH/BSC/Polygon) <-> RedFlag              ║");
     println!("╚══════════════════════════════════════════════════╝");
 
     let config = RelayerConfig::default();
-    let api_port: u16 = std::env::var("BRIDGE_PORT")
-        .unwrap_or_else(|_| "8547".to_string())
-        .parse().unwrap_or(8547);
+    let api_port: u16 = std::env::var("PORT")
+        .unwrap_or_else(|_| "10000".to_string())
+        .parse().unwrap_or(10000);
 
     println!("📋 Configuración del bridge:");
     println!("   RedFlag node:  {}", config.rf_node_url);

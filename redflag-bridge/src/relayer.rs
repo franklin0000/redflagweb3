@@ -137,9 +137,9 @@ impl Relayer {
 
             // Determinar qué token mintear según la cadena origen
             let token = match event.chain {
-                crate::types::EvmChain::EthereumSepolia => "wETH",
-                crate::types::EvmChain::BscTestnet      => "wBNB",
-                crate::types::EvmChain::PolygonAmoy     => "wMATIC",
+                crate::types::EvmChain::EthereumMainnet => "wETH",
+                crate::types::EvmChain::BscMainnet      => "wBNB",
+                crate::types::EvmChain::PolygonMainnet  => "wMATIC",
             };
 
             // Mintear wrapped token en RedFlag

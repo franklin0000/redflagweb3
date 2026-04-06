@@ -118,12 +118,25 @@ async fn main() -> Result<(), Box<dyn Error>> {
     println!("🔑 PeerID:     {}", peer_id);
     println!("🛡️  Chain ID:   {}", CHAIN_ID);
 
-    // ── 7. Bootstrap peer (opcional) ─────────────────────────────────────────
-    if let Ok(addr_str) = env::var("BOOTSTRAP_PEER") {
-        let multiaddr: Multiaddr = addr_str.parse()?;
-        println!("📡 Conectando a bootstrap: {}", multiaddr);
-        node.swarm.dial(multiaddr)?;
+    // ── 7. Bootstrap peers (opcional) ────────────────────────────────────────
+    // Soporta BOOTSTRAP_PEERS=addr1,addr2,addr3 o BOOTSTRAP_PEER=addr
+    let bootstrap_list: Vec<String> = if let Ok(peers) = env::var("BOOTSTRAP_PEERS") {
+        peers.split(',').map(|s| s.trim().to_string()).filter(|s| !s.is_empty()).collect()
+    } else if let Ok(peer) = env::var("BOOTSTRAP_PEER") {
+        vec![peer]
+    } else {
+        vec![]
+    };
+    for addr_str in &bootstrap_list {
+        match addr_str.parse::<Multiaddr>() {
+            Ok(multiaddr) => {
+                println!("📡 Conectando a bootstrap: {}", multiaddr);
+                node.swarm.dial(multiaddr)?;
+            }
+            Err(e) => eprintln!("⚠️  Bootstrap peer inválido '{}': {}", addr_str, e),
+        }
     }
+    println!("🌐 Bootstrap peers configurados: {}", bootstrap_list.len());
 
     // ── 8. TX genesis (solo si la red es nueva) ───────────────────────────────
     if consensus.get_current_round() == 0 {

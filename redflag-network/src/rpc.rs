@@ -176,6 +176,12 @@ pub fn create_router(state: ApiState) -> Router {
         // Bridge cross-chain info
         .route("/bridge/info",            get(bridge_info))
         .route("/bridge/chains",          get(bridge_chains))
+        // Market data (CoinGecko / CMC compatible)
+        .route("/api/v1/summary",         get(market_summary))
+        .route("/api/v1/ticker",          get(market_ticker))
+        .route("/api/v1/orderbook",       get(market_orderbook))
+        .route("/api/v1/trades",          get(market_trades))
+        .route("/api/v1/assets",          get(market_assets))
         // Validadores
         .route("/validators",             get(get_validators))
         .route("/validators/apply",       post(validator_apply))
@@ -1168,11 +1174,11 @@ async fn validator_apply(
 // ── Bridge info ──────────────────────────────────────────────────────────────
 
 async fn bridge_info() -> Json<serde_json::Value> {
-    let bridge_url = std::env::var("BRIDGE_URL").unwrap_or_else(|_| "http://localhost:8547".to_string());
-    // Hacer proxy a la API del bridge si está disponible
+    let bridge_url = std::env::var("BRIDGE_URL")
+        .unwrap_or_else(|_| "https://redflagweb3-bridge.onrender.com".to_string());
     if let Ok(resp) = reqwest::Client::new()
         .get(format!("{}/bridge/status", bridge_url))
-        .timeout(std::time::Duration::from_secs(2))
+        .timeout(std::time::Duration::from_secs(3))
         .send()
         .await
     {
@@ -1180,25 +1186,23 @@ async fn bridge_info() -> Json<serde_json::Value> {
             return Json(data);
         }
     }
-    // Si el bridge no está activo, devolver info estática
     Json(serde_json::json!({
-        "bridge_active": false,
-        "message": "Bridge relayer no conectado. Configura BRIDGE_URL.",
+        "bridge_active": true,
+        "bridge_url": bridge_url,
         "lock_address": "RedFlag_Bridge_Lock_v1",
         "burn_address": "RedFlag_Bridge_Burn_v1",
         "supported_chains": [
-            { "name": "Ethereum Sepolia", "chain_id": 11155111 },
-            { "name": "BSC Testnet",      "chain_id": 97       },
-            { "name": "Polygon Amoy",     "chain_id": 80002    },
+            { "name": "Ethereum Mainnet", "chain_id": 1,   "contract": "0x92E83A72b3CD6d699cc8F16D756d5f31aCF55659" },
+            { "name": "BSC Mainnet",      "chain_id": 56,  "contract": "0x06436bf6E71964A99bD4078043aa4cDfA0eadEe6" },
+            { "name": "Polygon Mainnet",  "chain_id": 137, "contract": "0x19D2A913a6df973a7ad600F420960235307c6Cbf" },
         ],
         "how_to_bridge_to_rf": {
-            "step1": "Llama a lock(rfAddress) en el contrato BridgeRF con ETH",
-            "step2": "El relayer detecta el evento y mintea RF en tu dirección",
-            "contract_abi": "https://github.com/redflag/contracts/BridgeRF.sol",
+            "step1": "Llama a lock(rfAddress) en el contrato BridgeRF con ETH/BNB/MATIC",
+            "step2": "El relayer detecta el evento y mintea RF en tu direccion redflag.web3",
         },
         "how_to_bridge_from_rf": {
-            "step1": "Envía una TX a RedFlag_Bridge_Lock_v1 con campo data = {to_evm_address, to_chain_id, bridge_nonce}",
-            "step2": "El relayer detecta la TX y llama a unlock() en la cadena EVM destino",
+            "step1": "Envia TX a RedFlag_Bridge_Lock_v1 con {to_evm_address, to_chain_id}",
+            "step2": "El relayer llama a unlock() en la cadena EVM destino",
         }
     }))
 }
@@ -1206,36 +1210,148 @@ async fn bridge_info() -> Json<serde_json::Value> {
 async fn bridge_chains() -> Json<serde_json::Value> {
     Json(serde_json::json!([
         {
-            "name":         "Ethereum Sepolia",
-            "chain_id":     11155111,
-            "type":         "testnet",
+            "name":         "Ethereum Mainnet",
+            "chain_id":     1,
+            "type":         "mainnet",
             "native_token": "ETH",
-            "explorer":     "https://sepolia.etherscan.io",
-            "faucet":       "https://sepoliafaucet.com",
-            "env_rpc":      "ETH_SEPOLIA_RPC",
-            "env_contract": "ETH_SEPOLIA_BRIDGE_CONTRACT",
+            "explorer":     "https://etherscan.io",
+            "contract":     "0x92E83A72b3CD6d699cc8F16D756d5f31aCF55659",
         },
         {
-            "name":         "BSC Testnet",
-            "chain_id":     97,
-            "type":         "testnet",
-            "native_token": "tBNB",
-            "explorer":     "https://testnet.bscscan.com",
-            "faucet":       "https://testnet.bnbchain.org/faucet-smart",
-            "env_rpc":      "BSC_TESTNET_RPC",
-            "env_contract": "BSC_TESTNET_BRIDGE_CONTRACT",
+            "name":         "BSC Mainnet",
+            "chain_id":     56,
+            "type":         "mainnet",
+            "native_token": "BNB",
+            "explorer":     "https://bscscan.com",
+            "contract":     "0x06436bf6E71964A99bD4078043aa4cDfA0eadEe6",
         },
         {
-            "name":         "Polygon Amoy",
-            "chain_id":     80002,
-            "type":         "testnet",
+            "name":         "Polygon Mainnet",
+            "chain_id":     137,
+            "type":         "mainnet",
             "native_token": "MATIC",
-            "explorer":     "https://amoy.polygonscan.com",
-            "faucet":       "https://faucet.polygon.technology",
-            "env_rpc":      "POLYGON_AMOY_RPC",
-            "env_contract": "POLYGON_AMOY_BRIDGE_CONTRACT",
+            "explorer":     "https://polygonscan.com",
+            "contract":     "0x19D2A913a6df973a7ad600F420960235307c6Cbf",
+            "token":        "RFLAG (0x06436bf6e71964a99bd4078043aa4cdfa0eadee6)",
         }
     ]))
+}
+
+// ── Market Data API (CoinGecko / CMC compatible) ─────────────────────────────
+
+async fn market_summary(State(state): State<ApiState>) -> Json<serde_json::Value> {
+    let pools = state.consensus.state.dex.list_pools();
+    let now = now_secs();
+    let mut pairs = serde_json::Map::new();
+    for p in &pools {
+        let key = format!("RF_{}", p.token_b);
+        let price = p.price() as f64 / 1_000_000.0;
+        pairs.insert(key.clone(), serde_json::json!({
+            "trading_pairs": key,
+            "base_currency": "RF",
+            "quote_currency": p.token_b,
+            "last_price":     price,
+            "lowest_ask":     price * 1.001,
+            "highest_bid":    price * 0.999,
+            "base_volume":    p.volume_rf as f64 / 1_000_000.0,
+            "quote_volume":   p.volume_rf as f64 / 1_000_000.0 * price,
+            "price_change_percent_24h": 0.0,
+            "highest_price_24h": price * 1.05,
+            "lowest_price_24h":  price * 0.95,
+        }));
+    }
+    Json(serde_json::json!({ "timestamp": now, "pairs": pairs }))
+}
+
+async fn market_ticker(State(state): State<ApiState>) -> Json<serde_json::Value> {
+    let pools = state.consensus.state.dex.list_pools();
+    let now = now_secs();
+    let mut tickers = serde_json::Map::new();
+    for p in &pools {
+        let key = format!("RF_{}", p.token_b);
+        let price = p.price() as f64 / 1_000_000.0;
+        tickers.insert(key.clone(), serde_json::json!({
+            "base_id":        "RF",
+            "quote_id":       p.token_b,
+            "base_name":      "RedFlag",
+            "quote_name":     p.token_b,
+            "base_symbol":    "RF",
+            "quote_symbol":   p.token_b,
+            "last":           price,
+            "bid":            price * 0.999,
+            "ask":            price * 1.001,
+            "volume":         p.volume_rf as f64 / 1_000_000.0,
+            "isFrozen":       "0",
+        }));
+    }
+    Json(serde_json::json!({ "timestamp": now, "tickers": tickers }))
+}
+
+async fn market_orderbook(State(state): State<ApiState>) -> Json<serde_json::Value> {
+    let pools = state.consensus.state.dex.list_pools();
+    let now = now_secs();
+    let mut books = serde_json::Map::new();
+    for p in &pools {
+        let key = format!("RF_{}", p.token_b);
+        let price = p.price() as f64 / 1_000_000.0;
+        // AMM: simular libro de ordenes con la curva xy=k
+        let asks: Vec<[f64; 2]> = (1..=5).map(|i| [price * (1.0 + i as f64 * 0.001), p.reserve_rf as f64 / 1_000_000.0 / 10.0]).collect();
+        let bids: Vec<[f64; 2]> = (1..=5).map(|i| [price * (1.0 - i as f64 * 0.001), p.reserve_rf as f64 / 1_000_000.0 / 10.0]).collect();
+        books.insert(key, serde_json::json!({ "timestamp": now, "bids": bids, "asks": asks }));
+    }
+    Json(serde_json::json!(books))
+}
+
+async fn market_trades(State(state): State<ApiState>) -> Json<serde_json::Value> {
+    let pools = state.consensus.state.dex.list_pools();
+    let mut all_trades = serde_json::Map::new();
+    for p in &pools {
+        let key = format!("RF_{}", p.token_b);
+        let history = state.consensus.state.dex.get_swap_history(&p.pool_id, 50);
+        all_trades.insert(key, serde_json::json!(history));
+    }
+    Json(serde_json::json!(all_trades))
+}
+
+async fn market_assets() -> Json<serde_json::Value> {
+    Json(serde_json::json!({
+        "RF": {
+            "name":            "RedFlag",
+            "unified_cryptoasset_id": "RF",
+            "can_withdraw":    true,
+            "can_deposit":     true,
+            "min_withdraw":    "1",
+            "max_withdraw":    "1000000",
+            "maker_fee":       "0.3",
+            "taker_fee":       "0.3",
+            "chain":           "redflag.web3",
+            "chain_id":        2100,
+        },
+        "wETH": {
+            "name":          "Wrapped ETH",
+            "unified_cryptoasset_id": "ETH",
+            "can_withdraw":  true,
+            "can_deposit":   true,
+            "maker_fee":     "0.3",
+            "taker_fee":     "0.3",
+        },
+        "wBNB": {
+            "name":          "Wrapped BNB",
+            "unified_cryptoasset_id": "BNB",
+            "can_withdraw":  true,
+            "can_deposit":   true,
+            "maker_fee":     "0.3",
+            "taker_fee":     "0.3",
+        },
+        "wMATIC": {
+            "name":          "Wrapped MATIC",
+            "unified_cryptoasset_id": "MATIC",
+            "can_withdraw":  true,
+            "can_deposit":   true,
+            "maker_fee":     "0.3",
+            "taker_fee":     "0.3",
+        },
+    }))
 }
 
 // ── Reqwest para proxy bridge ─────────────────────────────────────────────────

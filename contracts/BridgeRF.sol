@@ -22,11 +22,11 @@ pragma solidity ^0.8.24;
  *   - Multi-relayer: varios relayers pueden ejecutar unlock (requiere M de N en producción)
  */
 
-/// @dev Importar OpenZeppelin en producción (via npm/hardhat):
-/// import "@openzeppelin/contracts/access/Ownable.sol";
-/// import "@openzeppelin/contracts/security/ReentrancyGuard.sol";
-/// import "@openzeppelin/contracts/security/Pausable.sol";
-/// Por ahora implementamos inline para no requerir dependencias externas.
+// @dev Importar OpenZeppelin en producción (via npm/hardhat):
+// import "@openzeppelin/contracts/access/Ownable.sol";
+// import "@openzeppelin/contracts/security/ReentrancyGuard.sol";
+// import "@openzeppelin/contracts/security/Pausable.sol";
+// Por ahora implementamos inline para no requerir dependencias externas.
 
 contract BridgeRF {
 
@@ -112,7 +112,7 @@ contract BridgeRF {
     function lock(string calldata rfAddress) external payable whenNotPaused nonReentrant {
         require(msg.value > 0,       "BridgeRF: amount = 0");
         require(bytes(rfAddress).length >= 16, "BridgeRF: invalid rfAddress");
-        require(bytes(rfAddress).length <= 2048, "BridgeRF: rfAddress too long");
+        require(bytes(rfAddress).length <= 8192, "BridgeRF: rfAddress too long");
 
         // Calcular fee
         uint256 fee    = (msg.value * feeBps) / 10_000;

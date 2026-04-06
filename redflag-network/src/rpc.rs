@@ -176,6 +176,9 @@ pub fn create_router(state: ApiState) -> Router {
         // Bridge cross-chain info
         .route("/bridge/info",            get(bridge_info))
         .route("/bridge/chains",          get(bridge_chains))
+        // Validadores
+        .route("/validators",             get(get_validators))
+        .route("/validators/apply",       post(validator_apply))
         // WebSocket tiempo real
         .route("/ws",               get(ws_handler))
         // Métricas Prometheus
@@ -1091,6 +1094,75 @@ async fn dex_position(
         })),
         None => Json(serde_json::json!({ "lp_tokens": 0, "pool_id": pool })),
     }
+}
+
+// ── Validators ───────────────────────────────────────────────────────────────
+
+#[derive(Deserialize)]
+struct ValidatorApplyRequest {
+    /// Nombre o apodo del operador
+    name: String,
+    /// Dirección RF del validador (clave pública ML-DSA)
+    address: String,
+    /// Descripción / motivación
+    description: Option<String>,
+    /// Multiaddr P2P del nodo (ej: /ip4/1.2.3.4/tcp/9000/p2p/12D3...)
+    multiaddr: Option<String>,
+}
+
+async fn get_validators(State(state): State<ApiState>) -> Json<serde_json::Value> {
+    let peer_id = &state.peer_id;
+    let validator_count = state.consensus.validator_count();
+    // Leer solicitudes pendientes almacenadas en disco
+    let pending: Vec<serde_json::Value> = std::fs::read_to_string("./node_data/validator_applications.json")
+        .ok()
+        .and_then(|s| serde_json::from_str(&s).ok())
+        .unwrap_or_default();
+    Json(serde_json::json!({
+        "chain_id": redflag_core::CHAIN_ID,
+        "active_validators": validator_count,
+        "bootstrap_peer": format!("/dns4/redflagweb3-node1.onrender.com/tcp/9000/p2p/{}", peer_id),
+        "pending_applications": pending.len(),
+        "join_instructions": "https://github.com/franklin0000/redflagweb3/blob/main/docs/validator.md",
+    }))
+}
+
+async fn validator_apply(
+    State(state): State<ApiState>,
+    Json(req): Json<ValidatorApplyRequest>,
+) -> (StatusCode, Json<serde_json::Value>) {
+    if req.name.trim().is_empty() || req.address.trim().is_empty() {
+        return (StatusCode::BAD_REQUEST, Json(serde_json::json!({ "error": "name y address son obligatorios" })));
+    }
+    if req.address.len() < 16 {
+        return (StatusCode::BAD_REQUEST, Json(serde_json::json!({ "error": "address inválida" })));
+    }
+
+    let entry = serde_json::json!({
+        "name": req.name.trim(),
+        "address": req.address.trim(),
+        "description": req.description.unwrap_or_default(),
+        "multiaddr": req.multiaddr.unwrap_or_default(),
+        "applied_at": now_secs(),
+        "status": "pending",
+    });
+
+    // Persistir en disco
+    let path = "./node_data/validator_applications.json";
+    let mut apps: Vec<serde_json::Value> = std::fs::read_to_string(path)
+        .ok()
+        .and_then(|s| serde_json::from_str(&s).ok())
+        .unwrap_or_default();
+    apps.push(entry);
+    let _ = std::fs::write(path, serde_json::to_string_pretty(&apps).unwrap_or_default());
+
+    emit(&state.ws_tx, "validator_apply", serde_json::json!({ "name": req.name, "address": &req.address[..16.min(req.address.len())] }));
+
+    (StatusCode::ACCEPTED, Json(serde_json::json!({
+        "accepted": true,
+        "message": "Solicitud recibida. El owner de la red la revisará pronto.",
+        "next": "Únete al Discord/Telegram de redflag.web3 para seguimiento.",
+    })))
 }
 
 // ── Bridge info ──────────────────────────────────────────────────────────────

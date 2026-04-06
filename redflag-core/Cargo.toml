@@ -1,0 +1,16 @@
+[package]
+name = "redflag-core"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+
+[dependencies]
+redflag-crypto = { path = "../redflag-crypto" }
+serde = { workspace = true }
+sled = { workspace = true }
+thiserror = { workspace = true }
+anyhow = { workspace = true }
+log = { workspace = true }
+sha2 = "0.10"
+bincode = "1.3"

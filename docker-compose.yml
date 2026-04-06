@@ -1,0 +1,137 @@
+version: '3.9'
+
+# RedFlag 2.1 — Multi-node testnet (2 validators)
+# Usage:
+#   docker compose up --build          # start both nodes
+#   docker compose up node1            # start only node1
+#   docker compose logs -f             # follow logs
+#   docker compose down -v             # stop and remove volumes
+
+networks:
+  redflag-net:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.30.0.0/24
+
+volumes:
+  node1-data:
+  node2-data:
+  bridge-data:
+
+x-common: &common
+  build:
+    context: .
+    dockerfile: Dockerfile
+  restart: unless-stopped
+  networks:
+    - redflag-net
+  environment:
+    RUST_LOG: "info,redflag_network=debug"
+    DATA_DIR: /app/data
+
+services:
+  # ── Node 1 (bootstrap / primary validator) ──────────────────
+  node1:
+    <<: *common
+    container_name: redflag-node1
+    ports:
+      - "8545:8545"     # RPC + Dashboard (public)
+      - "9000:9000"     # P2P TCP
+      - "9000:9000/udp" # P2P QUIC
+    environment:
+      <<: *common
+      PORT: "8545"
+      P2P_PORT: "9000"
+      DATA_DIR: /app/data
+    volumes:
+      - node1-data:/app/data
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:8545/status"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+
+  # ── Node 2 (peer validator) ──────────────────────────────────
+  node2:
+    <<: *common
+    container_name: redflag-node2
+    ports:
+      - "8546:8546"     # RPC + Dashboard (secondary)
+      - "9001:9001"     # P2P TCP
+      - "9001:9001/udp" # P2P QUIC
+    environment:
+      <<: *common
+      PORT: "8546"
+      P2P_PORT: "9001"
+      DATA_DIR: /app/data
+      BOOTSTRAP_ADDR: "/dns4/node1/tcp/9000"
+    volumes:
+      - node2-data:/app/data
+    depends_on:
+      node1:
+        condition: service_healthy
+
+  # ── Bridge relayer (cross-chain EVM ↔ RedFlag) ──────────────
+  bridge:
+    build:
+      context: .
+      dockerfile: Dockerfile.bridge
+    container_name: redflag-bridge
+    networks:
+      - redflag-net
+    ports:
+      - "8547:8547"     # Bridge API
+    environment:
+      RUST_LOG: "info,redflag_bridge=debug"
+      RF_NODE_URL: "http://node1:8545"
+      BRIDGE_PORT: "8547"
+      BRIDGE_DATA_DIR: /app/data
+      BRIDGE_POLL_SECS: "12"
+      BRIDGE_CONFIRMATIONS: "3"
+      BRIDGE_MAX_AMOUNT: "1000000"
+      # Configurar con tus RPC y contratos:
+      # ETH_SEPOLIA_RPC: "https://eth-sepolia.g.alchemy.com/v2/YOUR_KEY"
+      # ETH_SEPOLIA_BRIDGE_CONTRACT: "0x..."
+      # BSC_TESTNET_RPC: "https://data-seed-prebsc-1-s1.binance.org:8545"
+      # BSC_TESTNET_BRIDGE_CONTRACT: "0x..."
+      # POLYGON_AMOY_RPC: "https://polygon-amoy.g.alchemy.com/v2/YOUR_KEY"
+      # POLYGON_AMOY_BRIDGE_CONTRACT: "0x..."
+      # BRIDGE_RF_PRIVATE_KEY: "hex_de_tu_clave_ml_dsa"
+      # BRIDGE_RELAYER_PRIVATE_KEY: "hex_clave_privada_EVM_del_relayer"
+    volumes:
+      - bridge-data:/app/data
+    depends_on:
+      node1:
+        condition: service_healthy
+    restart: unless-stopped
+
+  # ── Prometheus (optional monitoring) ────────────────────────
+  prometheus:
+    image: prom/prometheus:v2.52.0
+    container_name: redflag-prometheus
+    networks:
+      - redflag-net
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+    restart: unless-stopped
+    profiles:
+      - monitoring
+
+  # ── Grafana (optional dashboards) ───────────────────────────
+  grafana:
+    image: grafana/grafana:10.4.2
+    container_name: redflag-grafana
+    networks:
+      - redflag-net
+    ports:
+      - "3000:3000"
+    environment:
+      GF_SECURITY_ADMIN_PASSWORD: "redflag"
+      GF_USERS_ALLOW_SIGN_UP: "false"
+    restart: unless-stopped
+    profiles:
+      - monitoring

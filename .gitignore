@@ -1,0 +1,13 @@
+target/
+node_modules/
+dist/
+.env.production
+*.env
+bridge_data/
+node_data/
+node1/
+node2/
+*.log
+*.pem
+*.key
+status_dashboard.html

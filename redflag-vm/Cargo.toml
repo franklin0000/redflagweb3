@@ -1,0 +1,19 @@
+[package]
+name = "redflag-vm"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+description = "redflag.web3 — WASM Smart Contract VM con gas metering"
+
+[dependencies]
+redflag-core = { path = "../redflag-core" }
+wasmi = "0.31"
+serde = { workspace = true }
+serde_json = { workspace = true }
+bincode = { workspace = true }
+blake3 = { workspace = true }
+hex = { workspace = true }
+anyhow = { workspace = true }
+thiserror = { workspace = true }
+sled = "0.34"

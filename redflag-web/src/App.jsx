@@ -1,0 +1,1218 @@
+import { useState, useEffect, useCallback, useRef } from 'react';
+import {
+  Activity, Wallet, Database, Send, ShieldCheck, Zap,
+  Globe, Lock, Users, FileCode, Copy, RefreshCw, Plus,
+  Search, Settings, LogOut, CheckCircle2, AlertTriangle,
+  QrCode, TrendingUp, Eye, EyeOff, Download, BarChart3,
+  ArrowUpRight, ArrowDownLeft, Clock, Shield, Cpu, Key,
+  ArrowLeftRight, Droplets, TrendingDown, ChevronDown
+} from 'lucide-react';
+import { AreaChart, Area, LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid } from 'recharts';
+import { QRCodeSVG } from 'qrcode.react';
+import sdk from './sdk';
+import { generateMnemonic, validateMnemonic } from './mnemonic';
+import { encryptWallet, decryptWallet, loadKeystore, saveKeystore, deleteKeystore, hasKeystore } from './crypto';
+
+// ─────────────────────────────────────────────
+// UTILS
+// ─────────────────────────────────────────────
+const copy = t => navigator.clipboard?.writeText(t).catch(()=>{});
+const short = (s,n=14) => s && s.length > n*2+3 ? `${s.slice(0,n)}…${s.slice(-6)}` : (s||'—');
+const fmtN = n => typeof n === 'number' ? n.toLocaleString() : (n||0);
+const fmtDate = ts => ts ? new Date(ts*1000).toLocaleString() : '—';
+const fmtRF = n => `${fmtN(n)} RF`;
+
+// ─────────────────────────────────────────────
+// MICRO COMPONENTS
+// ─────────────────────────────────────────────
+const Dot = ({on}) => <span className={`ldot ${on?'on':'off'}`}/>;
+
+const Alert = ({type='ok',children}) => (
+  <div className={`alt alt-${type}`}>
+    {type==='ok'  && <CheckCircle2 size={15}/>}
+    {type==='err' && <AlertTriangle size={15}/>}
+    {type==='inf' && <ShieldCheck size={15}/>}
+    {type==='wrn' && <AlertTriangle size={15}/>}
+    <span>{children}</span>
+  </div>
+);
+
+const Chip = ({color='r',children}) => <span className={`bdg bdg-${color}`}>{children}</span>;
+
+const CopyBtn = ({text}) => {
+  const [done,setDone] = useState(false);
+  const handle = () => { copy(text); setDone(true); setTimeout(()=>setDone(false),1500); };
+  return <button className="cpbtn" onClick={handle} title="Copiar">{done ? <CheckCircle2 size={13}/> : <Copy size={13}/>}</button>;
+};
+
+const StatCard = ({icon:Icon,label,value,sub,color='var(--red)'}) => (
+  <div className="card fi" style={{display:'flex',flexDirection:'column',gap:4}}>
+    <div style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}>
+      <div className="stat-ico" style={{background:`${color}14`}}><Icon size={18} color={color}/></div>
+      <span style={{fontSize:10,color:'var(--txl)',fontWeight:700,letterSpacing:1}}>LIVE</span>
+    </div>
+    <div className="stat-val">{value}</div>
+    <div className="stat-lbl">{label}</div>
+    {sub && <div className="stat-sub" style={{color}}>{sub}</div>}
+  </div>
+);
+
+const SectionHdr = ({icon:Icon,title,right,color='var(--red)'}) => (
+  <div className="sec-hdr">
+    <div className="sec-ttl"><Icon size={16} color={color}/>{title}</div>
+    {right}
+  </div>
+);
+
+// ─────────────────────────────────────────────
+// LOCK / ONBOARDING
+// ─────────────────────────────────────────────
+function LockScreen({onUnlock}) {
+  const [pw,setPw] = useState('');
+  const [err,setErr] = useState('');
+  const [loading,setLoading] = useState(false);
+  const handle = async(e)=>{
+    e.preventDefault(); setErr(''); setLoading(true);
+    try {
+      const ks = loadKeystore();
+      const data = await decryptWallet(ks,pw);
+      onUnlock(data);
+    } catch(ex){ setErr(ex.message); }
+    finally { setLoading(false); }
+  };
+  return (
+    <div className="lock-sc">
+      <div className="card lock-card fi">
+        <div style={{textAlign:'center',marginBottom:32}}>
+          <ShieldCheck size={52} color="var(--red)" style={{margin:'0 auto 14px'}}/>
+          <h1 style={{fontFamily:'var(--acc)',fontSize:24,marginBottom:6}}>redflag.web3</h1>
+          <p style={{color:'var(--txm)',fontSize:13}}>Enter your password to unlock</p>
+        </div>
+        {err && <Alert type="err">{err}</Alert>}
+        <form onSubmit={handle}>
+          <div className="field">
+            <label className="inp-lbl">Password</label>
+            <input type="password" className="inp" value={pw} onChange={e=>setPw(e.target.value)} autoFocus placeholder="••••••••" required/>
+          </div>
+          <button type="submit" className="btn btn-p btn-fw btn-lg" disabled={loading||!pw}>
+            {loading ? <span className="spin"><RefreshCw size={14}/></span> : <><Lock size={15}/> Unlock</>}
+          </button>
+        </form>
+      </div>
+    </div>
+  );
+}
+
+function Onboarding({onComplete}) {
+  const [step,setStep] = useState('welcome'); // welcome|create|verify|import|password
+  const [mn,setMn] = useState('');
+  const [verify,setVerify] = useState('');
+  const [pw,setPw] = useState('');
+  const [pw2,setPw2] = useState('');
+  const [impMn,setImpMn] = useState('');
+  const [loading,setLoading] = useState(false);
+  const [err,setErr] = useState('');
+  const steps = {welcome:0,create:1,verify:2,password:3};
+
+  const startCreate = () => { setMn(generateMnemonic()); setStep('create'); };
+  
+  const finish = async() => {
+    setErr(''); setLoading(true);
+    try {
+      if(pw !== pw2) throw new Error('Passwords do not match');
+      if(pw.length < 8)  throw new Error('Password must be at least 8 characters');
+      const mnemonic = step === 'password' && impMn ? impMn : mn;
+      const res = await sdk.walletNew();
+      const data = { address: res.address, private_key_hex: res.private_key_hex, mnemonic, created: Date.now() };
+      const ks = await encryptWallet(data, pw);
+      saveKeystore(ks);
+      onComplete(data);
+    } catch(ex){ setErr(ex.message); }
+    finally { setLoading(false); }
+  };
+
+  return (
+    <div className="lock-sc">
+      <div className="card lock-card fi">
+        <div className="step-dots">
+          {Object.values(steps).map(i => <span key={i} className={`step-dot ${(steps[step]??0)>=i?'on':''}`}/>)}
+        </div>
+
+        {step==='welcome' && (
+          <div style={{textAlign:'center'}}>
+            <ShieldCheck size={56} color="var(--red)" style={{margin:'0 auto 16px'}}/>
+            <h2 style={{fontFamily:'var(--acc)',fontSize:24,marginBottom:10}}>Quantum Wallet</h2>
+            <p style={{color:'var(--txm)',fontSize:13,lineHeight:1.7,marginBottom:32}}>
+              Post-quantum security with ML-DSA-65 (FIPS 204).<br/>
+              Your keys are resistant to quantum computer attacks.
+            </p>
+            <button className="btn btn-p btn-fw btn-lg" style={{marginBottom:12}} onClick={startCreate}>
+              <Plus size={16}/> Create New Wallet
+            </button>
+            <button className="btn btn-o btn-fw" onClick={()=>setStep('import')}>
+              <Download size={15}/> Import with Seed Phrase
+            </button>
+          </div>
+        )}
+
+        {step==='create' && (
+          <div>
+            <h3 style={{fontFamily:'var(--acc)',marginBottom:6}}>Recovery Phrase</h3>
+            <p style={{color:'var(--txm)',fontSize:12,marginBottom:16}}>Write these 12 words down and store them safely. Never share them.</p>
+            <div className="mn-grid" style={{marginBottom:20}}>
+              {mn.split(' ').map((w,i)=>(
+                <div key={i} className="mn-word">
+                  <span className="mn-i">{i+1}.</span>
+                  <span className="mn-w">{w}</span>
+                </div>
+              ))}
+            </div>
+            <div className="alt alt-wrn" style={{fontSize:12,marginBottom:16}}>
+              <AlertTriangle size={14}/> Store this phrase offline. Anyone with it controls your funds.
+            </div>
+            <button className="btn btn-p btn-fw" onClick={()=>setStep('password')}>I've saved it securely →</button>
+          </div>
+        )}
+
+        {step==='import' && (
+          <div>
+            <h3 style={{fontFamily:'var(--acc)',marginBottom:12}}>Import Wallet</h3>
+            <div className="field">
+              <label className="inp-lbl">12-word seed phrase</label>
+              <textarea className="inp mono" rows={4} placeholder="word1 word2 word3 ..." value={impMn} onChange={e=>setImpMn(e.target.value)} style={{resize:'none'}}/>
+            </div>
+            {err && <Alert type="err">{err}</Alert>}
+            <button className="btn btn-p btn-fw" disabled={!validateMnemonic(impMn.trim())} onClick={()=>{ setMn(impMn.trim()); setStep('password'); }}>Continue →</button>
+            <button className="btn btn-o btn-fw" style={{marginTop:8}} onClick={()=>setStep('welcome')}>← Back</button>
+          </div>
+        )}
+
+        {step==='password' && (
+          <div>
+            <h3 style={{fontFamily:'var(--acc)',marginBottom:12}}>Set Encryption Password</h3>
+            <p style={{color:'var(--txm)',fontSize:12,marginBottom:16}}>AES-256-GCM + PBKDF2 (200K iterations). Your private key is never stored in plaintext.</p>
+            <div className="field">
+              <label className="inp-lbl">Password</label>
+              <input type="password" className="inp" value={pw} onChange={e=>setPw(e.target.value)} placeholder="min 8 characters"/>
+            </div>
+            <div className="field">
+              <label className="inp-lbl">Confirm Password</label>
+              <input type="password" className="inp" value={pw2} onChange={e=>setPw2(e.target.value)} placeholder="repeat password"/>
+            </div>
+            {pw && (
+              <div className="pbr" style={{marginBottom:12}}>
+                <div className="pfill" style={{width: pw.length>=12?'100%':pw.length>=8?'66%':'33%'}}/>
+              </div>
+            )}
+            {err && <Alert type="err">{err}</Alert>}
+            <button className="btn btn-p btn-fw" disabled={!pw||!pw2||loading} onClick={finish}>
+              {loading ? <><span className="spin"><RefreshCw size={14}/></span> Encrypting…</> : <><Lock size={14}/> Create Wallet</>}
+            </button>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────
+// WALLET PAGE
+// ─────────────────────────────────────────────
+function WalletPage({wallet,wsData}) {
+  const [account,setAccount] = useState({balance:0,nonce:0,exists:false});
+  const [history,setHistory] = useState([]);
+  const [tab,setTab] = useState('send');
+  const [result,setResult] = useState(null);
+  const [loading,setLoading] = useState(false);
+  const [showKey,setShowKey] = useState(false);
+  const [showQR,setShowQR] = useState(false);
+  const [faucetAmt,setFaucetAmt] = useState('1000');
+  const [send,setSend] = useState({to:'',amount:'',fee:'1'});
+
+  const refresh = useCallback(async()=>{
+    if(!wallet?.address) return;
+    try {
+      const [acc,hist] = await Promise.all([sdk.getAccount(wallet.address), sdk.getHistory(wallet.address)]);
+      if(acc) setAccount(acc);
+      setHistory(hist||[]);
+    } catch{}
+  },[wallet?.address]);
+
+  useEffect(()=>{ refresh(); },[refresh]);
+  useEffect(()=>{ if(wsData?.type==='new_block'||wsData?.type==='faucet') refresh(); },[wsData,refresh]);
+
+  const handleFaucet = async()=>{
+    setLoading(true); setResult(null);
+    try {
+      const r = await sdk.walletFaucet(wallet.address, parseInt(faucetAmt)||1000);
+      setResult({ok:r.accepted, msg:r.message, hash:r.tx_hash});
+    } catch(e){ setResult({ok:false,msg:e.response?.data?.message||e.message}); }
+    finally { setLoading(false); }
+  };
+
+  const handleSend = async(e)=>{
+    e.preventDefault(); setLoading(true); setResult(null);
+    try {
+      const r = await sdk.walletSend(wallet.private_key_hex, send.to, parseInt(send.amount), parseInt(send.fee)||1);
+      setResult({ok:r.accepted, msg:r.message, hash:r.tx_hash});
+      if(r.accepted){ setSend({to:'',amount:'',fee:'1'}); setTimeout(refresh,2000); }
+    } catch(e){ setResult({ok:r?.message||e.message}); const r=undefined; setResult({ok:false,msg:e.response?.data?.message||e.message}); }
+    finally { setLoading(false); }
+  };
+
+  // Sparkline from history (last 10 balances)
+  const sparkData = history.slice(0,10).reverse().map((tx,i)=>({
+    i, v: tx.receiver===wallet.address ? tx.amount : -tx.amount
+  }));
+
+  return (
+    <div className="pg">
+      {/* Balance card */}
+      <div className="c5">
+        <div className="card cr fi" style={{height:'100%'}}>
+          <div style={{display:'flex',justifyContent:'space-between',alignItems:'flex-start',marginBottom:20}}>
+            <Chip color="r">ML-DSA-65</Chip>
+            <div style={{display:'flex',gap:6}}>
+              <button className="ibtn btn-sm" onClick={()=>setShowQR(!showQR)} title="QR"><QrCode size={14}/></button>
+              <button className="ibtn btn-sm" onClick={refresh} title="Refresh"><RefreshCw size={14}/></button>
+            </div>
+          </div>
+
+          {showQR && <div style={{marginBottom:20}}><div className="qr-wrap"><QRCodeSVG value={wallet.address||''} size={140}/></div></div>}
+
+          <div className="bal-big">{fmtN(account.balance)}<span className="bal-unit">RF</span></div>
+          <div style={{marginTop:8,fontSize:12,color:'var(--txm)'}}>Nonce: {account.nonce} · {account.exists?<Chip color="g">Active</Chip>:<Chip color="x">No funds yet</Chip>}</div>
+
+          <div className="dvd"/>
+
+          <div style={{marginBottom:8}}>
+            <div style={{fontSize:10,color:'var(--txl)',fontWeight:700,letterSpacing:.7,marginBottom:6}}>ADDRESS</div>
+            <div style={{display:'flex',alignItems:'center',gap:8}}>
+              <span style={{fontFamily:'var(--mono)',fontSize:10.5,color:'var(--cyan)',wordBreak:'break-all',flex:1}}>{short(wallet.address,18)}</span>
+              <CopyBtn text={wallet.address}/>
+            </div>
+          </div>
+
+          <details style={{marginTop:14}}>
+            <summary style={{cursor:'pointer',fontSize:11,color:'var(--txl)',userSelect:'none',display:'flex',alignItems:'center',gap:6}}>
+              <Key size={12}/> Private Key (keep secret)
+            </summary>
+            <div style={{marginTop:10}}>
+              <div className="key-blk">{showKey ? short(wallet.private_key_hex,32) : '••••••••••••••••••••••••••••••••'}</div>
+              <div style={{display:'flex',gap:8,marginTop:8}}>
+                <button className="ibtn btn-sm" onClick={()=>setShowKey(!showKey)}>{showKey?<EyeOff size={13}/>:<Eye size={13}/>}</button>
+                <CopyBtn text={wallet.private_key_hex}/>
+              </div>
+            </div>
+          </details>
+        </div>
+      </div>
+
+      {/* Actions panel */}
+      <div className="c7">
+        <div className="card fi" style={{height:'100%'}}>
+          <div className="tabs">
+            {[['send','Send'],['faucet','Faucet'],['history','History']].map(([id,lbl])=>(
+              <button key={id} className={`tab ${tab===id?'on':''}`} onClick={()=>setTab(id)}>{lbl}</button>
+            ))}
+          </div>
+
+          {result && <Alert type={result.ok?'ok':'err'}>{result.msg}{result.hash&&<><br/><span style={{fontFamily:'var(--mono)',fontSize:10}}>tx: {result.hash.slice(0,32)}…</span></>}</Alert>}
+
+          {tab==='send' && (
+            <form onSubmit={handleSend}>
+              <div className="field">
+                <label className="inp-lbl">To Address</label>
+                <input className="inp mono" placeholder="hex address…" value={send.to} onChange={e=>setSend({...send,to:e.target.value})} required/>
+              </div>
+              <div style={{display:'grid',gridTemplateColumns:'1fr 100px',gap:12}}>
+                <div className="field">
+                  <label className="inp-lbl">Amount (RF)</label>
+                  <input type="number" className="inp" min="1" placeholder="100" value={send.amount} onChange={e=>setSend({...send,amount:e.target.value})} required/>
+                </div>
+                <div className="field">
+                  <label className="inp-lbl">Fee</label>
+                  <input type="number" className="inp" min="1" value={send.fee} onChange={e=>setSend({...send,fee:e.target.value})}/>
+                </div>
+              </div>
+              <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:16,fontSize:12,color:'var(--txm)'}}>
+                <span>Available: <b style={{color:'var(--txt)'}}>{fmtRF(account.balance)}</b></span>
+                <span>Nonce: {account.nonce}</span>
+              </div>
+              <button type="submit" className="btn btn-p btn-fw" disabled={loading||!send.to||!send.amount}>
+                {loading ? <><span className="spin"><RefreshCw size={14}/></span> Signing…</> : <><Send size={14}/> Sign & Broadcast</>}
+              </button>
+            </form>
+          )}
+
+          {tab==='faucet' && (
+            <div>
+              <div className="alt alt-inf" style={{marginBottom:20}}>
+                <ShieldCheck size={14}/>Free testnet tokens (max 10,000 RF per request)
+              </div>
+              <div className="field">
+                <label className="inp-lbl">Amount (max 10,000)</label>
+                <input type="number" className="inp" min="1" max="10000" value={faucetAmt} onChange={e=>setFaucetAmt(e.target.value)} placeholder="1000"/>
+              </div>
+              <button className="btn btn-gr btn-fw" onClick={handleFaucet} disabled={loading}>
+                {loading ? <><span className="spin"><RefreshCw size={14}/></span> Requesting…</> : '💧 Request RF Tokens'}
+              </button>
+            </div>
+          )}
+
+          {tab==='history' && (
+            <div style={{maxHeight:360,overflowY:'auto'}}>
+              {history.length===0 ? (
+                <div style={{textAlign:'center',padding:'40px 0',color:'var(--txl)'}}>
+                  <Clock size={32} style={{margin:'0 auto 10px',display:'block'}}/>No transactions yet
+                </div>
+              ) : (
+                <table className="tbl">
+                  <thead><tr><th>Type</th><th>Party</th><th>Amount</th><th>Fee</th><th>Date</th></tr></thead>
+                  <tbody>
+                    {history.map((tx,i)=>{
+                      const isSend = tx.sender===wallet.address;
+                      return <tr key={i}>
+                        <td><span style={{color:isSend?'#ff6b6b':'var(--green)',display:'flex',alignItems:'center',gap:4,fontWeight:700,fontSize:12}}>
+                          {isSend?<ArrowUpRight size={13}/>:<ArrowDownLeft size={13}/>}{isSend?'SEND':'RECV'}
+                        </span></td>
+                        <td className="mono">{short(isSend?tx.receiver:tx.sender,12)}</td>
+                        <td style={{color:isSend?'#ff6b6b':'var(--green)',fontWeight:600}}>{isSend?'-':'+'}{fmtN(tx.amount)} RF</td>
+                        <td style={{color:'var(--txl)'}}>{tx.fee} RF</td>
+                        <td style={{color:'var(--txl)',fontSize:11}}>{fmtDate(tx.timestamp)}</td>
+                      </tr>;
+                    })}
+                  </tbody>
+                </table>
+              )}
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────
+// DASHBOARD PAGE
+// ─────────────────────────────────────────────
+function DashboardPage({stats,vertices,mempool,roundEk,tpsHist,online}) {
+  const s = stats?.consensus||{};
+  const sup = stats?.supply||{};
+  const threshold = stats?.threshold||{};
+
+  return (
+    <div className="pg">
+      <div className="c3"><StatCard icon={Zap}    label="Round"       value={fmtN(s.round)}            color="var(--red)"/></div>
+      <div className="c3"><StatCard icon={Users}  label="Validators"  value={fmtN(s.validator_count)}  color="var(--cyan)"/></div>
+      <div className="c3"><StatCard icon={Database} label="Vertices"  value={fmtN(s.total_vertices)} sub={`${fmtN(s.committed_vertices)} committed`} color="var(--purple)"/></div>
+      <div className="c3"><StatCard icon={Activity} label="Total TXs" value={fmtN(s.tx_count)}         color="var(--yellow)"/></div>
+      <div className="c3"><StatCard icon={Users}  label="Accounts"    value={fmtN(s.account_count)}    color="var(--green)"/></div>
+      <div className="c3"><StatCard icon={Clock}  label="Pending TXs" value={fmtN(s.pending_txs)}      color="var(--txm)"/></div>
+      <div className="c3"><StatCard icon={TrendingUp} label="Fee Pool" value={fmtRF(sup.fee_pool||0)}  color="var(--yellow)"/></div>
+      <div className="c3"><StatCard icon={Lock}   label="Threshold"   value={`Rnd ${threshold.round||0}`} sub={threshold.algorithm||'ML-KEM-768'} color="var(--cyan)"/></div>
+
+      {/* TPS Chart */}
+      <div className="c8">
+        <div className="card fi">
+          <SectionHdr icon={BarChart3} title="Transaction Activity" color="var(--red)"/>
+          <ResponsiveContainer width="100%" height={180}>
+            <AreaChart data={tpsHist}>
+              <defs>
+                <linearGradient id="rg" x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="5%" stopColor="var(--red)" stopOpacity={0.25}/>
+                  <stop offset="95%" stopColor="var(--red)" stopOpacity={0}/>
+                </linearGradient>
+              </defs>
+              <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,.05)"/>
+              <XAxis dataKey="t" tick={{fill:'var(--txl)',fontSize:10}} tickLine={false}/>
+              <YAxis tick={{fill:'var(--txl)',fontSize:10}} tickLine={false} axisLine={false}/>
+              <Tooltip contentStyle={{background:'var(--bg2)',border:'1px solid var(--border)',borderRadius:8,fontSize:12}}/>
+              <Area type="monotone" dataKey="v" stroke="var(--red)" fill="url(#rg)" strokeWidth={2} dot={false}/>
+            </AreaChart>
+          </ResponsiveContainer>
+        </div>
+      </div>
+
+      {/* Supply */}
+      <div className="c4">
+        <div className="card fi">
+          <SectionHdr icon={TrendingUp} title="Token Supply" color="var(--yellow)"/>
+          {[
+            ['Total',      sup.total,       'var(--txt)'],
+            ['Circulating',sup.circulating, 'var(--green)'],
+            ['Fee Pool',   sup.fee_pool,    'var(--yellow)'],
+            ['Faucet',     sup.faucet,      'var(--cyan)'],
+          ].map(([lbl,val,c])=>(
+            <div key={lbl} style={{display:'flex',justifyContent:'space-between',padding:'8px 0',borderBottom:'1px solid var(--border)',fontSize:13}}>
+              <span style={{color:'var(--txm)'}}>{lbl}</span>
+              <span style={{color:c,fontWeight:600}}>{fmtN(val)} RF</span>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {/* DAG Table */}
+      <div className="c8">
+        <div className="card fi np">
+          <div style={{padding:'16px 18px 0'}}>
+            <SectionHdr icon={Globe} title="Live DAG" color="var(--cyan)"
+              right={<Chip color="c">Bullshark</Chip>}/>
+          </div>
+          <div style={{overflowX:'auto'}}>
+            <table className="tbl">
+              <thead><tr><th>Vertex</th><th>Round</th><th>Author</th><th>TXs</th><th>Status</th></tr></thead>
+              <tbody>
+                {vertices.slice(0,10).map(v=>(
+                  <tr key={v.id}>
+                    <td className="mono" style={{color:'var(--cyan)'}} title={v.id}>0x{v.id.slice(0,14)}…</td>
+                    <td className="bold">{v.round}</td>
+                    <td className="mono">{v.author.slice(0,12)}…</td>
+                    <td>{v.tx_count}</td>
+                    <td>{v.committed ? <Chip color="g">✓ Committed</Chip> : <Chip color="x">Pending</Chip>}</td>
+                  </tr>
+                ))}
+                {vertices.length===0 && <tr><td colSpan={5} style={{textAlign:'center',color:'var(--txl)',padding:24}}>Waiting for vertices…</td></tr>}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+
+      {/* Mempool */}
+      <div className="c4">
+        <div className="card fi">
+          <SectionHdr icon={Activity} title="Mempool" color="var(--red)"
+            right={<Chip color="r">{mempool.count||0} pending</Chip>}/>
+          <div style={{maxHeight:240,overflowY:'auto'}}>
+            {(mempool.txs||[]).slice(0,8).map((tx,i)=>(
+              <div key={i} style={{padding:'8px 0',borderBottom:'1px solid rgba(255,255,255,.04)',fontSize:12}}>
+                <div style={{display:'flex',justifyContent:'space-between'}}>
+                  <span className="font-mono" style={{fontSize:10,color:'var(--txm)'}}>{short(tx.sender,10)}→{short(tx.receiver,10)}</span>
+                  <span style={{color:'var(--red)',fontWeight:600}}>{fmtN(tx.amount)} RF</span>
+                </div>
+                <div style={{color:'var(--txl)',fontSize:10,marginTop:2}}>fee:{tx.fee} · nonce:{tx.nonce}</div>
+              </div>
+            ))}
+            {(!mempool.txs||mempool.txs.length===0)&&<div style={{textAlign:'center',color:'var(--txl)',padding:'20px 0',fontSize:12}}>Mempool empty</div>}
+          </div>
+        </div>
+      </div>
+
+      {/* Threshold */}
+      <div className="c12">
+        <div className="card cc fi">
+          <div style={{display:'flex',alignItems:'center',gap:16,flexWrap:'wrap'}}>
+            <Lock size={20} color="var(--cyan)"/>
+            <div>
+              <div style={{fontWeight:700,marginBottom:2}}>Threshold Encrypted Mempool — ML-KEM-768</div>
+              <div style={{fontSize:11,color:'var(--txm)'}}>Anti-MEV • Anti-frontrunning • Keys rotated every round</div>
+            </div>
+            <Chip color="c">Round {roundEk.round||0}</Chip>
+            <div style={{fontFamily:'var(--mono)',fontSize:10,color:'var(--txl)',wordBreak:'break-all',flex:1}}>
+              EK: {(roundEk.ek_hex||'').slice(0,64)}…
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────
+// EXPLORER PAGE
+// ─────────────────────────────────────────────
+function ExplorerPage() {
+  const [q,setQ] = useState('');
+  const [result,setResult] = useState(null);
+  const [loading,setLoading] = useState(false);
+  const [vertices,setVertices] = useState([]);
+
+  useEffect(()=>{ sdk.getVertices().then(setVertices).catch(()=>{}); },[]);
+
+  const search = async(e)=>{
+    e.preventDefault(); if(!q.trim()) return;
+    setLoading(true); setResult(null);
+    try { const r = await sdk.search(q.trim()); setResult(r); }
+    catch(ex){ setResult({type:'error',msg:ex.message}); }
+    finally { setLoading(false); }
+  };
+
+  return (
+    <div>
+      <form onSubmit={search} style={{display:'flex',gap:12,marginBottom:24}}>
+        <input className="inp" placeholder="Search by address, vertex ID or tx hash…" value={q} onChange={e=>setQ(e.target.value)} style={{flex:1}}/>
+        <button type="submit" className="btn btn-p" disabled={loading||!q.trim()}>
+          {loading ? <span className="spin"><RefreshCw size={14}/></span> : <Search size={14}/>} Search
+        </button>
+      </form>
+
+      {result && (
+        <div className="card fi" style={{marginBottom:24}}>
+          {result.type==='address' && (
+            <div>
+              <div style={{display:'flex',alignItems:'center',gap:10,marginBottom:16}}>
+                <Wallet size={18} color="var(--cyan)"/>
+                <span style={{fontFamily:'var(--acc)',fontWeight:700,fontSize:16}}>Account</span>
+                <Chip color="c">address</Chip>
+              </div>
+              {[['Address',result.address],['Balance',fmtRF(result.balance)],['Nonce',result.nonce],['Transactions',result.tx_count],['Total Sent',fmtRF(result.total_sent)],['Total Received',fmtRF(result.total_received)]].map(([k,v])=>(
+                <div key={k} style={{display:'flex',justifyContent:'space-between',padding:'8px 0',borderBottom:'1px solid var(--border)',fontSize:13}}>
+                  <span style={{color:'var(--txm)'}}>{k}</span>
+                  <span style={{fontFamily:k==='Address'?'var(--mono)':'inherit',fontSize:k==='Address'?11:13,color:'var(--txt)',fontWeight:600,wordBreak:'break-all',maxWidth:'65%',textAlign:'right'}}>{v}</span>
+                </div>
+              ))}
+              {result.history?.length>0 && (
+                <div style={{marginTop:16}}>
+                  <div style={{fontWeight:700,marginBottom:10,fontSize:13,color:'var(--txm)'}}>Recent Transactions</div>
+                  <table className="tbl">
+                    <thead><tr><th>Sender</th><th>Receiver</th><th>Amount</th><th>Fee</th><th>Date</th></tr></thead>
+                    <tbody>
+                      {result.history.map((tx,i)=>(
+                        <tr key={i}>
+                          <td className="mono">{short(tx.sender,14)}</td>
+                          <td className="mono">{short(tx.receiver,14)}</td>
+                          <td className="bold">{fmtN(tx.amount)} RF</td>
+                          <td style={{color:'var(--txl)'}}>{tx.fee}</td>
+                          <td style={{color:'var(--txl)',fontSize:11}}>{fmtDate(tx.timestamp)}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+          )}
+          {result.type==='vertex' && (
+            <div>
+              <div style={{display:'flex',alignItems:'center',gap:10,marginBottom:16}}>
+                <Database size={18} color="var(--purple)"/>
+                <span style={{fontFamily:'var(--acc)',fontWeight:700,fontSize:16}}>DAG Vertex</span>
+                {result.committed ? <Chip color="g">Committed</Chip> : <Chip color="x">Pending</Chip>}
+              </div>
+              {[['ID',result.id],['Round',result.round],['Author',result.author],['Transactions',result.tx_count],['Encrypted TXs',result.etx_count]].map(([k,v])=>(
+                <div key={k} style={{display:'flex',justifyContent:'space-between',padding:'8px 0',borderBottom:'1px solid var(--border)',fontSize:13}}>
+                  <span style={{color:'var(--txm)'}}>{k}</span>
+                  <span style={{fontFamily:['ID','Author'].includes(k)?'var(--mono)':'inherit',fontSize:['ID','Author'].includes(k)?11:13,color:'var(--txt)',fontWeight:600,wordBreak:'break-all',maxWidth:'65%',textAlign:'right'}}>{String(v)}</span>
+                </div>
+              ))}
+            </div>
+          )}
+          {result.type==='not_found' && <Alert type="wrn">No results for: <b>{result.query||result.hash}</b></Alert>}
+          {result.type==='error'     && <Alert type="err">{result.msg}</Alert>}
+        </div>
+      )}
+
+      {/* All vertices */}
+      <div className="card np">
+        <div style={{padding:'16px 18px 0'}}>
+          <SectionHdr icon={Globe} title="Recent Vertices" color="var(--cyan)"/>
+        </div>
+        <div style={{overflowX:'auto'}}>
+          <table className="tbl">
+            <thead><tr><th>Vertex ID</th><th>Round</th><th>Author</th><th>TXs</th><th>Status</th></tr></thead>
+            <tbody>
+              {vertices.map(v=>(
+                <tr key={v.id} style={{cursor:'pointer'}} onClick={()=>setQ(v.id)}>
+                  <td className="mono" style={{color:'var(--cyan)'}} title={v.id}>0x{v.id.slice(0,18)}…</td>
+                  <td className="bold">{v.round}</td>
+                  <td className="mono">{v.author.slice(0,14)}…</td>
+                  <td>{v.tx_count}</td>
+                  <td>{v.committed ? <Chip color="g">✓</Chip> : <Chip color="x">⏳</Chip>}</td>
+                </tr>
+              ))}
+              {vertices.length===0 && <tr><td colSpan={5} style={{textAlign:'center',color:'var(--txl)',padding:24}}>No vertices yet</td></tr>}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────
+// NETWORK PAGE
+// ─────────────────────────────────────────────
+function NetworkPage({stats,online}) {
+  const n = stats?.node||{};
+  const c = stats?.consensus||{};
+  const t = stats?.threshold||{};
+  const s = stats?.supply||{};
+  const uptime = n.uptime_secs||0;
+  const uptimeStr = `${Math.floor(uptime/3600)}h ${Math.floor((uptime%3600)/60)}m`;
+
+  return (
+    <div className="pg">
+      <div className="c6">
+        <div className="card fi">
+          <SectionHdr icon={Globe} title="Node Identity"/>
+          {[['Peer ID',n.peer_id||'—'],['Chain ID',n.chain_id||2100],['Version',n.version||'2.1.0'],['Uptime',uptimeStr],['Min Fee',`${n.min_fee||1} RF`]].map(([k,v])=>(
+            <div key={k} style={{display:'flex',justifyContent:'space-between',alignItems:'center',padding:'10px 0',borderBottom:'1px solid var(--border)',fontSize:13}}>
+              <span style={{color:'var(--txm)'}}>{k}</span>
+              <div style={{display:'flex',alignItems:'center',gap:6}}>
+                <span style={{fontFamily:k==='Peer ID'?'var(--mono)':'inherit',fontSize:k==='Peer ID'?10:13,color:'var(--txt)',wordBreak:'break-all',textAlign:'right',maxWidth:260}}>{String(v)}</span>
+                {k==='Peer ID' && <CopyBtn text={n.peer_id||''}/>}
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      <div className="c6">
+        <div className="card fi">
+          <SectionHdr icon={Cpu} title="Consensus Stats" color="var(--purple)"/>
+          {[['Round',c.round],['Validators',c.validator_count],['Total Vertices',c.total_vertices],['Committed',c.committed_vertices],['Pending TXs',c.pending_txs],['Total TXs',c.tx_count]].map(([k,v])=>(
+            <div key={k} style={{display:'flex',justifyContent:'space-between',padding:'10px 0',borderBottom:'1px solid var(--border)',fontSize:13}}>
+              <span style={{color:'var(--txm)'}}>{k}</span>
+              <span style={{color:'var(--txt)',fontWeight:600}}>{fmtN(v)}</span>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      <div className="c6">
+        <div className="card cc fi">
+          <SectionHdr icon={Shield} title="Threshold Encryption" color="var(--cyan)"/>
+          <div style={{marginBottom:16}}>
+            <Chip color="c">ML-KEM-768 (FIPS 203)</Chip>
+            <div style={{marginTop:12,fontSize:13}}>
+              <div style={{display:'flex',justifyContent:'space-between',padding:'8px 0',borderBottom:'1px solid rgba(255,255,255,.05)'}}>
+                <span style={{color:'var(--txm)'}}>Active Round</span>
+                <span style={{fontWeight:700}}>{t.round||0}</span>
+              </div>
+              <div style={{padding:'8px 0',borderBottom:'1px solid rgba(255,255,255,.05)'}}>
+                <div style={{color:'var(--txm)',marginBottom:6,fontSize:12}}>Current EK prefix</div>
+                <div style={{fontFamily:'var(--mono)',fontSize:10,color:'var(--cyan)',wordBreak:'break-all'}}>{t.ek_prefix||'—'}…</div>
+              </div>
+            </div>
+          </div>
+          <div className="alt alt-inf" style={{fontSize:12}}>
+            <Lock size={13}/>All transactions encrypted before entering mempool. Decrypted only after Bullshark commit.
+          </div>
+        </div>
+      </div>
+
+      <div className="c6">
+        <div className="card fi">
+          <SectionHdr icon={TrendingUp} title="Token Economics" color="var(--yellow)"/>
+          {[['Total Supply',fmtRF(s.total)],['Circulating',fmtRF(s.circulating)],['Fee Pool',fmtRF(s.fee_pool)],['Faucet Reserve',fmtRF(s.faucet)],['Genesis',fmtRF(s.genesis)]].map(([k,v])=>(
+            <div key={k} style={{display:'flex',justifyContent:'space-between',padding:'9px 0',borderBottom:'1px solid var(--border)',fontSize:13}}>
+              <span style={{color:'var(--txm)'}}>{k}</span>
+              <span style={{color:'var(--txt)',fontWeight:600}}>{v}</span>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      <div className="c12">
+        <div className="card fi">
+          <SectionHdr icon={Cpu} title="Tech Stack"/>
+          <div style={{display:'grid',gridTemplateColumns:'repeat(4,1fr)',gap:12}}>
+            {[
+              {lbl:'Consensus',val:'Bullshark DAG',sub:'Narwhal+Bullshark',c:'var(--red)'},
+              {lbl:'Signatures',val:'ML-DSA-65',sub:'FIPS 204 Post-Quantum',c:'var(--cyan)'},
+              {lbl:'KEM',val:'ML-KEM-768',sub:'FIPS 203 Anti-MEV',c:'var(--purple)'},
+              {lbl:'P2P',val:'libp2p 0.53',sub:'QUIC+TCP+Kademlia+mDNS',c:'var(--yellow)'},
+              {lbl:'Execution',val:'Parallel',sub:'rayon + conflict detection',c:'var(--green)'},
+              {lbl:'VM',val:'WASM (wasmi)',sub:'Gas metering + ML-DSA verify',c:'var(--purple)'},
+              {lbl:'Storage',val:'sled',sub:'Embedded persistent DB',c:'var(--txm)'},
+              {lbl:'Crypto',val:'aws-lc-rs',sub:'FIPS 140-3 validated',c:'var(--red)'},
+            ].map(t=>(
+              <div key={t.lbl} style={{padding:'14px',background:'var(--bg3)',borderRadius:'var(--rs)',border:'1px solid var(--border)'}}>
+                <div style={{fontSize:10,color:'var(--txl)',fontWeight:700,letterSpacing:.8,marginBottom:6}}>{t.lbl}</div>
+                <div style={{fontWeight:700,color:t.c,fontSize:14}}>{t.val}</div>
+                <div style={{fontSize:11,color:'var(--txm)',marginTop:3}}>{t.sub}</div>
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────
+// SETTINGS PAGE
+// ─────────────────────────────────────────────
+function SettingsPage({wallet,onLogout}) {
+  const [exported,setExported] = useState(false);
+  const exportKeystore = () => {
+    const ks = loadKeystore();
+    const blob = new Blob([JSON.stringify(ks,null,2)], {type:'application/json'});
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a'); a.href=url; a.download='redflag-keystore.json'; a.click();
+    URL.revokeObjectURL(url); setExported(true);
+  };
+  return (
+    <div className="pg">
+      <div className="c6">
+        <div className="card fi">
+          <SectionHdr icon={Settings} title="Wallet Security"/>
+          <div className="field">
+            <div className="inp-lbl">Your Address</div>
+            <div style={{display:'flex',alignItems:'center',gap:8}}>
+              <div className="code" style={{flex:1,fontSize:10}}>{wallet?.address||'—'}</div>
+              <CopyBtn text={wallet?.address||''}/>
+            </div>
+          </div>
+          <div className="field">
+            <div className="inp-lbl">Seed Phrase</div>
+            <details>
+              <summary style={{cursor:'pointer',fontSize:12,color:'var(--txl)'}}>Show recovery phrase</summary>
+              <div className="mn-grid" style={{marginTop:12}}>
+                {(wallet?.mnemonic||'').split(' ').map((w,i)=>(
+                  <div key={i} className="mn-word">
+                    <span className="mn-i">{i+1}.</span>
+                    <span className="mn-w">{w}</span>
+                  </div>
+                ))}
+              </div>
+            </details>
+          </div>
+          <div className="dvd"/>
+          <div style={{display:'flex',gap:10,flexWrap:'wrap'}}>
+            <button className="btn btn-ghost" onClick={exportKeystore}><Download size={14}/>Export Keystore</button>
+            {exported && <Chip color="g">✓ Downloaded</Chip>}
+          </div>
+        </div>
+      </div>
+      <div className="c6">
+        <div className="card cr fi">
+          <SectionHdr icon={AlertTriangle} title="Danger Zone" color="var(--red)"/>
+          <div className="alt alt-wrn" style={{marginBottom:16}}>
+            <AlertTriangle size={14}/>Removing wallet will delete all local data. Make sure you have your seed phrase.
+          </div>
+          <button className="btn btn-o" style={{color:'var(--red)',borderColor:'var(--br)'}} onClick={()=>{if(confirm('Delete wallet?')){deleteKeystore();onLogout();}}}>
+            <LogOut size={14}/> Remove Wallet
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────
+// ROOT APP
+// ─────────────────────────────────────────────
+// DEX PAGE
+// ─────────────────────────────────────────────
+function DexPage({ wallet }) {
+  const [pools, setPools]       = useState([]);
+  const [selPool, setSelPool]   = useState('RF_wETH');
+  const [tab, setTab]           = useState('swap');   // swap | liquidity | pools
+  const [dir, setDir]           = useState('rf_to_b');
+  const [amtIn, setAmtIn]       = useState('');
+  const [quote, setQuote]       = useState(null);
+  const [history, setHistory]   = useState([]);
+  const [prices, setPrices]     = useState([]);
+  const [busy, setBusy]         = useState(false);
+  const [msg, setMsg]           = useState(null);
+  const [amtRF, setAmtRF]       = useState('');
+  const [amtB, setAmtB]         = useState('');
+  const [lpAmt, setLpAmt]       = useState('');
+  const [position, setPosition] = useState(null);
+
+  const pool = pools.find(p => p.pool_id === selPool) || {};
+  const tokenB = selPool.replace('RF_','');
+
+  const fetchData = useCallback(async () => {
+    try {
+      const [pd, hd, prd] = await Promise.all([
+        sdk.getDexPools(),
+        sdk.getDexHistory(selPool),
+        sdk.getDexPrices(selPool),
+      ]);
+      setPools(pd.pools || []);
+      setHistory(hd.swaps || []);
+      setPrices(prd.prices || []);
+      if (wallet) {
+        const pos = await sdk.getDexPosition(wallet.address, selPool);
+        setPosition(pos);
+      }
+    } catch {}
+  }, [selPool, wallet]);
+
+  useEffect(() => { fetchData(); const iv = setInterval(fetchData, 5000); return () => clearInterval(iv); }, [fetchData]);
+
+  // Auto-quote
+  useEffect(() => {
+    if (!amtIn || isNaN(amtIn) || Number(amtIn) <= 0) { setQuote(null); return; }
+    const t = setTimeout(async () => {
+      try { const q = await sdk.dexQuote(selPool, dir, Number(amtIn)); setQuote(q); } catch { setQuote(null); }
+    }, 400);
+    return () => clearTimeout(t);
+  }, [amtIn, dir, selPool]);
+
+  const notify = (type, text) => { setMsg({ type, text }); setTimeout(() => setMsg(null), 4000); };
+
+  const handleSwap = async () => {
+    if (!wallet) return notify('err','Conecta tu wallet primero');
+    if (!amtIn || Number(amtIn) <= 0) return notify('err','Ingresa un monto');
+    setBusy(true);
+    try {
+      const minOut = quote ? Math.floor(quote.amount_out * 0.99) : 0; // 1% slippage
+      const res = await sdk.dexSwap(wallet.private_key_hex, selPool, dir, Number(amtIn), minOut);
+      if (res.success) {
+        notify('ok', `✅ Swap: ${amtIn} ${dir==='rf_to_b'?'RF':''+tokenB} → ${res.amount_out} ${dir==='rf_to_b'?tokenB:'RF'}`);
+        setAmtIn(''); setQuote(null); fetchData();
+      } else notify('err', res.error || 'Error en el swap');
+    } catch(e) { notify('err', e.response?.data?.error || e.message); }
+    setBusy(false);
+  };
+
+  const handleAddLiq = async () => {
+    if (!wallet) return notify('err','Conecta tu wallet primero');
+    setBusy(true);
+    try {
+      const res = await sdk.dexAddLiquidity(wallet.private_key_hex, selPool, Number(amtRF), Number(amtB));
+      if (res.success) { notify('ok', `✅ Liquidez añadida: ${res.lp_tokens} LP tokens`); setAmtRF(''); setAmtB(''); fetchData(); }
+      else notify('err', res.error || 'Error');
+    } catch(e) { notify('err', e.response?.data?.error || e.message); }
+    setBusy(false);
+  };
+
+  const handleRemoveLiq = async () => {
+    if (!wallet) return notify('err','Conecta tu wallet primero');
+    setBusy(true);
+    try {
+      const res = await sdk.dexRemoveLiquidity(wallet.private_key_hex, selPool, Number(lpAmt));
+      if (res.success) { notify('ok', `✅ Retirado: ${res.amount_rf} RF + ${res.amount_b} ${tokenB}`); setLpAmt(''); fetchData(); }
+      else notify('err', res.error || 'Error');
+    } catch(e) { notify('err', e.response?.data?.error || e.message); }
+    setBusy(false);
+  };
+
+  const priceChartData = prices.slice(-60).map(p => ({ t: new Date(p.ts*1000).toLocaleTimeString('en',{hour:'2-digit',minute:'2-digit'}), price: p.price }));
+
+  return (
+    <div style={{display:'flex',flexDirection:'column',gap:16}}>
+      <SectionHdr icon={ArrowLeftRight} title="DEX — redflag.web3 Swap" color="var(--purple)"
+        right={<div style={{display:'flex',gap:8}}>
+          {['swap','liquidity','pools'].map(t=>(
+            <button key={t} className={`btn-o ${tab===t?'active':''}`} style={tab===t?{borderColor:'var(--purple)',color:'var(--purple)'}:{}} onClick={()=>setTab(t)}>{t}</button>
+          ))}
+        </div>}
+      />
+
+      {msg && <Alert type={msg.type}>{msg.text}</Alert>}
+
+      <div style={{display:'grid',gridTemplateColumns:'1fr 360px',gap:16}}>
+
+        {/* CHART + STATS */}
+        <div style={{display:'flex',flexDirection:'column',gap:12}}>
+          {/* Pool selector */}
+          <div className="card fi" style={{display:'flex',gap:8,alignItems:'center'}}>
+            {pools.map(p=>(
+              <button key={p.pool_id} onClick={()=>setSelPool(p.pool_id)}
+                className={`btn-o ${selPool===p.pool_id?'active':''}`}
+                style={selPool===p.pool_id?{borderColor:'var(--purple)',color:'var(--purple)',fontWeight:700}:{}}>
+                RF / {p.token_b}
+              </button>
+            ))}
+          </div>
+
+          {/* Price chart */}
+          <div className="card fi" style={{height:220}}>
+            <div style={{display:'flex',justifyContent:'space-between',marginBottom:8}}>
+              <span style={{fontWeight:700,color:'var(--purple)'}}>RF / {tokenB} Price</span>
+              <span style={{fontSize:13,color:'var(--green)',fontWeight:700}}>{pool.price ? pool.price.toFixed(6) : '—'} {tokenB}</span>
+            </div>
+            <ResponsiveContainer width="100%" height={160}>
+              <AreaChart data={priceChartData}>
+                <defs><linearGradient id="pg" x1="0" y1="0" x2="0" y2="1"><stop offset="5%" stopColor="var(--purple)" stopOpacity={0.3}/><stop offset="95%" stopColor="var(--purple)" stopOpacity={0}/></linearGradient></defs>
+                <XAxis dataKey="t" tick={{fontSize:10,fill:'var(--txl)'}} tickLine={false}/>
+                <YAxis tick={{fontSize:10,fill:'var(--txl)'}} tickLine={false} axisLine={false} domain={['auto','auto']}/>
+                <Tooltip contentStyle={{background:'var(--bg2)',border:'1px solid var(--bdr)',borderRadius:8,fontSize:11}} formatter={v=>[v?.toFixed(6),'Price']}/>
+                <CartesianGrid stroke="var(--bdr)" strokeDasharray="3 3" vertical={false}/>
+                <Area type="monotone" dataKey="price" stroke="var(--purple)" fill="url(#pg)" strokeWidth={2} dot={false}/>
+              </AreaChart>
+            </ResponsiveContainer>
+          </div>
+
+          {/* Pool stats */}
+          <div style={{display:'grid',gridTemplateColumns:'repeat(4,1fr)',gap:8}}>
+            {[
+              {label:'Reserve RF', value:fmtRF(pool.reserve_rf)},
+              {label:`Reserve ${tokenB}`, value:fmtN(pool.reserve_b)},
+              {label:'Volume RF', value:fmtRF(pool.volume_rf)},
+              {label:'Fees collected', value:fmtRF(pool.fees_collected)},
+            ].map(s=>(
+              <div key={s.label} className="card fi" style={{padding:'10px 14px'}}>
+                <div style={{fontSize:10,color:'var(--txl)',marginBottom:4}}>{s.label}</div>
+                <div style={{fontWeight:700,fontSize:13,color:'var(--purple)'}}>{s.value}</div>
+              </div>
+            ))}
+          </div>
+
+          {/* Swap history */}
+          <div className="card fi">
+            <div style={{fontWeight:700,marginBottom:10,fontSize:13}}>Recent Trades</div>
+            <table className="tbl"><thead><tr><th>Type</th><th>Amount In</th><th>Amount Out</th><th>Trader</th><th>Time</th></tr></thead>
+              <tbody>
+                {history.slice(0,20).map((s,i)=>(
+                  <tr key={i}>
+                    <td><span className={`bdg ${s.direction==='RfToB'?'bdg-r':'bdg-g'}`}>{s.direction==='RfToB'?`RF→${tokenB}`:`${tokenB}→RF`}</span></td>
+                    <td>{fmtN(s.amount_in)}</td>
+                    <td style={{color:'var(--green)'}}>{fmtN(s.amount_out)}</td>
+                    <td style={{fontFamily:'monospace',fontSize:11}}>{short(s.trader,8)}</td>
+                    <td style={{color:'var(--txl)',fontSize:11}}>{fmtDate(s.timestamp)}</td>
+                  </tr>
+                ))}
+                {history.length===0 && <tr><td colSpan={5} style={{textAlign:'center',color:'var(--txl)',padding:20}}>No trades yet</td></tr>}
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        {/* SIDE PANEL */}
+        <div style={{display:'flex',flexDirection:'column',gap:12}}>
+
+          {/* ── SWAP ── */}
+          {tab === 'swap' && (
+            <div className="card fi" style={{display:'flex',flexDirection:'column',gap:12}}>
+              <div style={{fontWeight:700,fontSize:14,color:'var(--purple)',display:'flex',alignItems:'center',gap:8}}>
+                <ArrowLeftRight size={16}/> Swap
+              </div>
+              {/* Direction toggle */}
+              <div style={{display:'flex',gap:6}}>
+                <button className={`btn-o ${dir==='rf_to_b'?'active':''}`}
+                  style={dir==='rf_to_b'?{borderColor:'var(--purple)',color:'var(--purple)',flex:1}:{flex:1}}
+                  onClick={()=>{setDir('rf_to_b');setAmtIn('');setQuote(null);}}>
+                  RF → {tokenB}
+                </button>
+                <button className={`btn-o ${dir==='b_to_rf'?'active':''}`}
+                  style={dir==='b_to_rf'?{borderColor:'var(--green)',color:'var(--green)',flex:1}:{flex:1}}
+                  onClick={()=>{setDir('b_to_rf');setAmtIn('');setQuote(null);}}>
+                  {tokenB} → RF
+                </button>
+              </div>
+
+              <div>
+                <div style={{fontSize:11,color:'var(--txl)',marginBottom:4}}>You pay ({dir==='rf_to_b'?'RF':tokenB})</div>
+                <input className="inp" type="number" placeholder="0" value={amtIn} onChange={e=>setAmtIn(e.target.value)} style={{width:'100%',boxSizing:'border-box'}}/>
+              </div>
+
+              {quote && (
+                <div style={{background:'var(--bg3)',borderRadius:8,padding:'10px 12px',fontSize:12}}>
+                  <div style={{display:'flex',justifyContent:'space-between',marginBottom:4}}>
+                    <span style={{color:'var(--txl)'}}>You receive</span>
+                    <span style={{fontWeight:700,color:'var(--green)'}}>{fmtN(quote.amount_out)} {dir==='rf_to_b'?tokenB:'RF'}</span>
+                  </div>
+                  <div style={{display:'flex',justifyContent:'space-between',marginBottom:4}}>
+                    <span style={{color:'var(--txl)'}}>Fee (0.3%)</span>
+                    <span>{fmtN(quote.fee)} {dir==='rf_to_b'?'RF':tokenB}</span>
+                  </div>
+                  <div style={{display:'flex',justifyContent:'space-between'}}>
+                    <span style={{color:'var(--txl)'}}>Price impact</span>
+                    <span style={{color:quote.price_impact>2?'var(--red)':'var(--green)'}}>{quote.price_impact?.toFixed(2)}%</span>
+                  </div>
+                </div>
+              )}
+
+              {!wallet && <Alert type="wrn">Conecta tu wallet para hacer swap</Alert>}
+              <button className="btn-p" style={{background:'var(--purple)',width:'100%'}} onClick={handleSwap} disabled={busy||!wallet}>
+                {busy ? <RefreshCw size={14} className="spin"/> : <ArrowLeftRight size={14}/>}
+                {busy ? 'Procesando…' : 'Swap'}
+              </button>
+            </div>
+          )}
+
+          {/* ── LIQUIDITY ── */}
+          {tab === 'liquidity' && (
+            <div className="card fi" style={{display:'flex',flexDirection:'column',gap:12}}>
+              <div style={{fontWeight:700,fontSize:14,color:'var(--cyan)',display:'flex',alignItems:'center',gap:8}}>
+                <Droplets size={16}/> Liquidity
+              </div>
+              {position && position.lp_tokens > 0 && (
+                <div style={{background:'var(--bg3)',borderRadius:8,padding:'10px 12px',fontSize:12}}>
+                  <div style={{color:'var(--txl)',marginBottom:4}}>Tu posición en {selPool}</div>
+                  <div style={{fontWeight:700,color:'var(--cyan)'}}>{fmtN(position.lp_tokens)} LP tokens</div>
+                </div>
+              )}
+
+              <div style={{fontWeight:600,fontSize:12,color:'var(--txl)'}}>Add Liquidity</div>
+              <div>
+                <div style={{fontSize:11,color:'var(--txl)',marginBottom:4}}>RF amount</div>
+                <input className="inp" type="number" placeholder="0" value={amtRF} onChange={e=>setAmtRF(e.target.value)} style={{width:'100%',boxSizing:'border-box'}}/>
+              </div>
+              <div>
+                <div style={{fontSize:11,color:'var(--txl)',marginBottom:4}}>{tokenB} amount</div>
+                <input className="inp" type="number" placeholder="0" value={amtB} onChange={e=>setAmtB(e.target.value)} style={{width:'100%',boxSizing:'border-box'}}/>
+              </div>
+              <button className="btn-g" style={{width:'100%'}} onClick={handleAddLiq} disabled={busy||!wallet}>
+                {busy?<RefreshCw size={14} className="spin"/>:<Plus size={14}/>} Add Liquidity
+              </button>
+
+              <div style={{borderTop:'1px solid var(--bdr)',paddingTop:12,fontWeight:600,fontSize:12,color:'var(--txl)'}}>Remove Liquidity</div>
+              <div>
+                <div style={{fontSize:11,color:'var(--txl)',marginBottom:4}}>LP tokens to burn</div>
+                <input className="inp" type="number" placeholder="0" value={lpAmt} onChange={e=>setLpAmt(e.target.value)} style={{width:'100%',boxSizing:'border-box'}}/>
+              </div>
+              <button className="btn-o" style={{width:'100%',borderColor:'var(--red)',color:'var(--red)'}} onClick={handleRemoveLiq} disabled={busy||!wallet}>
+                {busy?<RefreshCw size={14} className="spin"/>:<TrendingDown size={14}/>} Remove Liquidity
+              </button>
+            </div>
+          )}
+
+          {/* ── ALL POOLS ── */}
+          {tab === 'pools' && (
+            <div className="card fi" style={{display:'flex',flexDirection:'column',gap:8}}>
+              <div style={{fontWeight:700,fontSize:14,marginBottom:4}}>All Pools</div>
+              {pools.map(p=>(
+                <div key={p.pool_id} onClick={()=>{setSelPool(p.pool_id);setTab('swap');}}
+                  style={{background:'var(--bg3)',borderRadius:8,padding:'12px 14px',cursor:'pointer',border:`1px solid ${selPool===p.pool_id?'var(--purple)':'var(--bdr)'}`}}>
+                  <div style={{display:'flex',justifyContent:'space-between',marginBottom:6}}>
+                    <span style={{fontWeight:700}}>RF / {p.token_b}</span>
+                    <span className="bdg bdg-p" style={{background:'#7c3aed22',color:'#a78bfa',border:'1px solid #7c3aed44'}}>AMM</span>
+                  </div>
+                  <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:4,fontSize:11,color:'var(--txl)'}}>
+                    <div>Price: <span style={{color:'var(--green)'}}>{p.price?.toFixed(6)||'—'}</span></div>
+                    <div>Volume: {fmtRF(p.volume_rf)}</div>
+                    <div>Reserve RF: {fmtN(p.reserve_rf)}</div>
+                    <div>Fees: {fmtRF(p.fees_collected)}</div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {/* Bridge hint */}
+          <div className="card fi" style={{border:'1px solid var(--bdr)',borderRadius:8,padding:'12px 14px',fontSize:12}}>
+            <div style={{fontWeight:700,marginBottom:6,color:'var(--cyan)'}}>🌉 Cross-chain</div>
+            <div style={{color:'var(--txl)',lineHeight:1.6}}>
+              Haz bridge de ETH/BNB/MATIC → wETH/wBNB/wMATIC en redflag.web3,<br/>
+              luego tradea en el DEX nativo con fees de solo 0.3%.
+            </div>
+            <div style={{display:'flex',gap:6,marginTop:8,flexWrap:'wrap'}}>
+              {['Ethereum','BSC','Polygon'].map(c=><span key={c} className="bdg bdg-b">{c}</span>)}
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────
+const PAGES = [
+  {id:'wallet',   label:'Wallet',      icon:Wallet},
+  {id:'dashboard',label:'Dashboard',   icon:Activity},
+  {id:'dex',      label:'DEX Trading', icon:ArrowLeftRight},
+  {id:'explorer', label:'Explorer',    icon:Search},
+  {id:'network',  label:'Network',     icon:Globe},
+  {id:'settings', label:'Settings',    icon:Settings},
+];
+
+export default function App() {
+  const [wallet,setWallet]   = useState(null);
+  const [page,setPage]       = useState('dashboard');
+  const [online,setOnline]   = useState(false);
+  const [stats,setStats]     = useState({});
+  const [vertices,setVertices] = useState([]);
+  const [mempool,setMempool] = useState({count:0,txs:[]});
+  const [roundEk,setRoundEk] = useState({round:0,ek_hex:''});
+  const [tpsHist,setTpsHist] = useState([]);
+  const [pendingBadge,setPending] = useState(0);
+  const [wsData,setWsData]   = useState(null);
+  const [search,setSearch]   = useState('');
+  const prevTx = useRef(0);
+
+  const ks = hasKeystore();
+
+  // Load wallet from memory only (never store decrypted)
+  // If wallet is null and keystore exists → show lock screen
+  // If no keystore → show onboarding
+
+  const fetchData = useCallback(async()=>{
+    try {
+      const [st,v,m,ek] = await Promise.all([sdk.getNetworkStats(), sdk.getVertices(), sdk.getMempool(), sdk.getRoundEk()]);
+      setStats(st); setVertices(v||[]); setMempool(m||{count:0,txs:[]});
+      setRoundEk(ek||{}); setOnline(true);
+      // TPS history
+      const cur = st?.consensus?.tx_count||0;
+      const diff = cur - prevTx.current;
+      prevTx.current = cur;
+      const ts = new Date().toLocaleTimeString('en',{hour:'2-digit',minute:'2-digit',second:'2-digit'});
+      setTpsHist(h=>[...h.slice(-29),{t:ts,v:Math.max(0,diff)}]);
+      setPending(m?.count||0);
+    } catch { setOnline(false); }
+  },[]);
+
+  useEffect(()=>{
+    fetchData();
+    const iv = setInterval(fetchData,4000);
+    return ()=>clearInterval(iv);
+  },[fetchData]);
+
+  // WebSocket
+  useEffect(()=>{
+    const unsub = sdk.connectWS(data=>setWsData(data));
+    return ()=>{ if(typeof unsub==='function') unsub(); };
+  },[]);
+
+  // Search redirect
+  const handleSearch = e=>{
+    e.preventDefault();
+    if(search.trim()){ setPage('explorer'); }
+  };
+
+  if(!ks && !wallet)        return <Onboarding onComplete={w=>{ setWallet(w); setPage('wallet'); }}/>;
+  if(ks  && !wallet)        return <LockScreen onUnlock={w=>{ setWallet(w); setPage('wallet'); }}/>;
+
+  const pageTitles = {wallet:'My Wallet',dashboard:'Dashboard',dex:'DEX Trading',explorer:'Block Explorer',network:'Network Info',settings:'Settings'};
+
+  return (
+    <div className="shell">
+      {/* SIDEBAR */}
+      <aside className="sidebar">
+        <div className="sb-logo">
+          <ShieldCheck size={22}/>redflag<span style={{fontWeight:300,opacity:.6}}>.web3</span>
+        </div>
+        <nav className="sb-nav">
+          <div className="nav-lbl">Main</div>
+          {PAGES.map(p=>(
+            <div key={p.id} className={`nav-item ${page===p.id?'on':''}`} onClick={()=>setPage(p.id)}>
+              <p.icon size={17}/>
+              {p.label}
+              {p.id==='wallet' && pendingBadge>0 && <span className="nav-badge">{pendingBadge}</span>}
+            </div>
+          ))}
+        </nav>
+        <div className="sb-foot">
+          <div className="node-pill">
+            <div className={`ldot ${online?'on':'off'}`}/>
+            <span className="node-pill-txt">{stats?.node?.peer_id ? short(stats.node.peer_id,12) : 'connecting…'}</span>
+          </div>
+        </div>
+      </aside>
+
+      {/* MAIN */}
+      <div className="main">
+        <div className="topbar">
+          <div className="topbar-ttl">{pageTitles[page]||page}</div>
+          <form className="sw" onSubmit={handleSearch}>
+            <Search size={14} className="si-ico"/>
+            <input className="si" placeholder="Search address, tx, vertex…" value={search} onChange={e=>setSearch(e.target.value)}
+              onKeyDown={e=>{ if(e.key==='Enter'){ setPage('explorer'); } }}/>
+          </form>
+          <div className="tb-right">
+            <div style={{display:'flex',alignItems:'center',gap:7,fontSize:12,color:online?'var(--green)':'var(--txl)'}}>
+              <div className={`ldot ${online?'on':'off'}`}/>
+              {online?'Connected':'Offline'}
+            </div>
+            <button className="ibtn" onClick={fetchData} title="Refresh"><RefreshCw size={14}/></button>
+          </div>
+        </div>
+
+        <div className="page">
+          {page==='wallet'    && <WalletPage    wallet={wallet} wsData={wsData}/>}
+          {page==='dashboard' && <DashboardPage stats={stats} vertices={vertices} mempool={mempool} roundEk={roundEk} tpsHist={tpsHist} online={online}/>}
+          {page==='dex'       && <DexPage       wallet={wallet}/>}
+          {page==='explorer'  && <ExplorerPage/>}
+          {page==='network'   && <NetworkPage   stats={stats} online={online}/>}
+          {page==='settings'  && <SettingsPage  wallet={wallet} onLogout={()=>{ setWallet(null); }}/>}
+        </div>
+      </div>
+    </div>
+  );
+}

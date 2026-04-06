@@ -1,0 +1,187 @@
+version: '3.9'
+
+# RedFlag 2.1 — PRODUCTION docker-compose
+# Uso: docker compose -f docker-compose.production.yml --env-file .env.production up -d
+
+networks:
+  redflag-net:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.30.0.0/24
+
+volumes:
+  node1-data:
+  node2-data:
+  bridge-data:
+  nginx-certs:
+  prometheus-data:
+  grafana-data:
+
+x-node-base: &node-base
+  build:
+    context: .
+    dockerfile: Dockerfile
+  restart: always
+  networks:
+    - redflag-net
+  logging:
+    driver: "json-file"
+    options:
+      max-size: "50m"
+      max-file: "5"
+  ulimits:
+    nofile:
+      soft: 65536
+      hard: 65536
+
+services:
+  # ── Node 1 — Validador Principal ─────────────────────────────────────────
+  node1:
+    <<: *node-base
+    container_name: redflag-node1
+    ports:
+      - "8545:8545"
+      - "9000:9000"
+      - "9000:9000/udp"
+    environment:
+      PORT: "8545"
+      P2P_PORT: "9000"
+      DATA_DIR: /app/data
+      RUST_LOG: "warn"
+      BRIDGE_URL: "http://bridge:8547"
+    volumes:
+      - node1-data:/app/data
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:8545/status"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+    deploy:
+      resources:
+        limits:
+          cpus: '2'
+          memory: 2G
+
+  # ── Node 2 — Validador Secundario ────────────────────────────────────────
+  node2:
+    <<: *node-base
+    container_name: redflag-node2
+    ports:
+      - "8546:8546"
+      - "9001:9001"
+      - "9001:9001/udp"
+    environment:
+      PORT: "8546"
+      P2P_PORT: "9001"
+      DATA_DIR: /app/data
+      RUST_LOG: "warn"
+      BOOTSTRAP_PEER: "/dns4/node1/tcp/9000"
+      BRIDGE_URL: "http://bridge:8547"
+    volumes:
+      - node2-data:/app/data
+    depends_on:
+      node1:
+        condition: service_healthy
+    deploy:
+      resources:
+        limits:
+          cpus: '2'
+          memory: 2G
+
+  # ── Bridge Relayer ────────────────────────────────────────────────────────
+  bridge:
+    build:
+      context: .
+      dockerfile: Dockerfile.bridge
+    container_name: redflag-bridge
+    restart: always
+    networks:
+      - redflag-net
+    ports:
+      - "8547:8547"
+    env_file:
+      - .env.production
+    environment:
+      RF_NODE_URL: "http://node1:8545"
+      BRIDGE_PORT: "8547"
+      BRIDGE_DATA_DIR: /app/data
+    volumes:
+      - bridge-data:/app/data
+    depends_on:
+      node1:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:8547/bridge/health"]
+      interval: 20s
+      timeout: 5s
+      retries: 3
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "20m"
+        max-file: "3"
+
+  # ── Nginx Reverse Proxy + SSL ─────────────────────────────────────────────
+  nginx:
+    image: nginx:1.25-alpine
+    container_name: redflag-nginx
+    restart: always
+    networks:
+      - redflag-net
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./deploy/nginx/redflag.conf:/etc/nginx/conf.d/redflag.conf:ro
+      - /etc/letsencrypt:/etc/letsencrypt:ro
+      - nginx-certs:/etc/nginx/certs
+    depends_on:
+      - node1
+      - node2
+    healthcheck:
+      test: ["CMD", "nginx", "-t"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  # ── Prometheus ─────────────────────────────────────────────────────────────
+  prometheus:
+    image: prom/prometheus:v2.52.0
+    container_name: redflag-prometheus
+    restart: always
+    networks:
+      - redflag-net
+    volumes:
+      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus-data:/prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--storage.tsdb.retention.time=30d'
+      - '--web.enable-lifecycle'
+    profiles:
+      - monitoring
+
+  # ── Grafana ─────────────────────────────────────────────────────────────
+  grafana:
+    image: grafana/grafana:10.4.2
+    container_name: redflag-grafana
+    restart: always
+    networks:
+      - redflag-net
+    ports:
+      - "3000:3000"
+    environment:
+      GF_SECURITY_ADMIN_USER: "admin"
+      GF_SECURITY_ADMIN_PASSWORD: "${GRAFANA_PASSWORD:-redflag_secure_2024}"
+      GF_USERS_ALLOW_SIGN_UP: "false"
+      GF_SERVER_DOMAIN: "${DOMAIN}"
+      GF_SERVER_ROOT_URL: "https://grafana.${DOMAIN}"
+    volumes:
+      - grafana-data:/var/lib/grafana
+    depends_on:
+      - prometheus
+    profiles:
+      - monitoring

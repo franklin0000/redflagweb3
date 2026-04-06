@@ -1,0 +1,20 @@
+[package]
+name = "redflag-consensus"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+redflag-core = { path = "../redflag-core" }
+redflag-crypto = { path = "../redflag-crypto" }
+redflag-state = { path = "../redflag-state" }
+tokio = { workspace = true }
+serde = { workspace = true }
+bincode = { workspace = true }
+blake3 = { workspace = true }
+dashmap = { workspace = true }
+hex = { workspace = true }
+anyhow = { workspace = true }
+sled = "0.34"
+rayon = { workspace = true }
+aws-lc-rs = { version = "1.10.0", features = ["unstable"] }
+chrono = { workspace = true }

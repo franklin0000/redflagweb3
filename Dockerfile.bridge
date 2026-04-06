@@ -1,0 +1,66 @@
+# ─────────────────────────────────────────────────────────────
+# RedFlag Bridge Relayer — Dockerfile
+# ─────────────────────────────────────────────────────────────
+FROM rust:1.82-slim AS builder
+WORKDIR /app
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    cmake clang git perl make build-essential pkg-config \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY Cargo.toml Cargo.lock ./
+
+# Stub sources for dep caching
+RUN mkdir -p redflag-core/src redflag-crypto/src redflag-state/src \
+             redflag-consensus/src redflag-network/src redflag-cli/src \
+             redflag-vm/src redflag-bridge/src \
+    && echo '' | tee \
+        redflag-core/src/lib.rs redflag-crypto/src/lib.rs \
+        redflag-state/src/lib.rs redflag-consensus/src/lib.rs \
+        redflag-vm/src/lib.rs redflag-network/src/lib.rs \
+    && echo 'fn main(){}' | tee \
+        redflag-network/src/main.rs redflag-cli/src/main.rs redflag-bridge/src/main.rs
+
+COPY redflag-core/Cargo.toml       redflag-core/
+COPY redflag-crypto/Cargo.toml     redflag-crypto/
+COPY redflag-state/Cargo.toml      redflag-state/
+COPY redflag-consensus/Cargo.toml  redflag-consensus/
+COPY redflag-network/Cargo.toml    redflag-network/
+COPY redflag-cli/Cargo.toml        redflag-cli/
+COPY redflag-vm/Cargo.toml         redflag-vm/
+COPY redflag-bridge/Cargo.toml     redflag-bridge/
+
+RUN cargo build --release -p redflag-bridge 2>/dev/null || true
+RUN find target/release -name "libredflag*" -delete 2>/dev/null || true
+
+COPY redflag-core/src        redflag-core/src
+COPY redflag-crypto/src      redflag-crypto/src
+COPY redflag-state/src       redflag-state/src
+COPY redflag-consensus/src   redflag-consensus/src
+COPY redflag-network/src     redflag-network/src
+COPY redflag-cli/src         redflag-cli/src
+COPY redflag-vm/src          redflag-vm/src
+COPY redflag-bridge/src      redflag-bridge/src
+
+RUN cargo build --release -p redflag-bridge
+
+# ── Final image ───────────────────────────────────────────────
+FROM debian:bookworm-slim
+WORKDIR /app
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ca-certificates curl \
+    && rm -rf /var/lib/apt/lists/* \
+    && useradd -ms /bin/bash bridge
+
+COPY --from=builder /app/target/release/redflag-bridge ./redflag-bridge
+RUN mkdir -p /app/data && chown -R bridge:bridge /app
+USER bridge
+
+HEALTHCHECK --interval=20s --timeout=5s --start-period=15s --retries=3 \
+    CMD curl -sf http://localhost:${BRIDGE_PORT:-8547}/bridge/health || exit 1
+
+EXPOSE 8547
+ENV BRIDGE_PORT=8547 BRIDGE_DATA_DIR=/app/data RUST_LOG=info
+
+CMD ["./redflag-bridge"]

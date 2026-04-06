@@ -1,0 +1,15 @@
+[package]
+name = "redflag-crypto"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+
+[dependencies]
+aws-lc-rs = { workspace = true }
+sha2 = { workspace = true }
+zeroize = { workspace = true }
+serde = { workspace = true }
+thiserror = { workspace = true }
+anyhow = { workspace = true }
+log = { workspace = true }

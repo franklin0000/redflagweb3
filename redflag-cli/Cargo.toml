@@ -1,0 +1,18 @@
+[package]
+name = "redflag-cli"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+
+[dependencies]
+redflag-core = { path = "../redflag-core" }
+redflag-crypto = { path = "../redflag-crypto" }
+tokio = { workspace = true, features = ["full"] }
+serde = { workspace = true }
+serde_json = { workspace = true }
+reqwest = { workspace = true }
+clap = { workspace = true }
+hex = { workspace = true }
+anyhow = { workspace = true }
+bincode = { workspace = true }

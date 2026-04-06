@@ -2,7 +2,7 @@ import axios from 'axios';
 
 class RedFlagSDK {
     constructor(nodeUrl = null) {
-        this.nodeUrl = nodeUrl || window.location.origin;
+        this.nodeUrl = nodeUrl || import.meta.env.VITE_NODE_URL || window.location.origin;
         this.wsUrl = this.nodeUrl.replace(/^http/, 'ws') + '/ws';
         this.ws = null;
         this.listeners = new Set();

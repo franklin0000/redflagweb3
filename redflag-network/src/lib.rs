@@ -192,7 +192,7 @@ impl RedFlagNode {
         use redflag_crypto::HybridKeyExchange;
 
         match event {
-            request_response::Event::Message { peer, message } => match message {
+            request_response::Event::Message { peer, message, connection_id: _ } => match message {
                 Message::Request { request, channel, .. } => {
                     let PqcRequest::InitHandshake { x25519_public, kem_public } = request;
                     let our_x25519_priv = HybridKeyExchange::generate_x25519_keypair().map_err(|e| e.to_string())?;
@@ -231,7 +231,7 @@ impl RedFlagNode {
         use libp2p::request_response::Message;
 
         match event {
-            request_response::Event::Message { peer: _, message } => match message {
+            request_response::Event::Message { peer: _, message, connection_id: _ } => match message {
                 Message::Request { request, channel, .. } => match request {
                     ConsensusRequest::GetVertex(id) => {
                         let vertex = self.consensus.dag.get_vertex(&id).map(|v| (*v).clone());
@@ -327,7 +327,7 @@ impl RedFlagNode {
 
     /// Maneja eventos de Identify (intercambio de capacidades)
     pub fn handle_identify_event(&mut self, event: identify::Event) {
-        if let identify::Event::Received { peer_id, info } = event {
+        if let identify::Event::Received { peer_id, info, connection_id: _ } = event {
             println!("🔖 Identify: {} — {}", peer_id, info.agent_version);
             // Registrar sus direcciones en Kademlia
             for addr in info.listen_addrs {

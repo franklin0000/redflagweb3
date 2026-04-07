@@ -796,8 +796,14 @@ async fn bridge_mint(
     Json(req): Json<BridgeMintRequest>,
 ) -> (StatusCode, Json<serde_json::Value>) {
     // FIX #6: Verificar secreto con timing-safe comparison (evita timing attacks)
-    let expected = std::env::var("BRIDGE_MINT_SECRET")
-        .unwrap_or_else(|_| "bridge_dev_secret".to_string());
+    // FIX A: Rechazar si BRIDGE_MINT_SECRET no está configurado (no usar default inseguro)
+    let expected = match std::env::var("BRIDGE_MINT_SECRET") {
+        Ok(s) if !s.is_empty() && s != "bridge_dev_secret" => s,
+        _ => {
+            tracing::error!("BRIDGE_MINT_SECRET no configurado o usa valor por defecto inseguro");
+            return (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({ "error": "Bridge no configurado correctamente" })));
+        }
+    };
     // Comparación de longitud constante para evitar timing side-channel
     let secret_ok = req.bridge_secret.len() == expected.len()
         && req.bridge_secret.as_bytes().iter()

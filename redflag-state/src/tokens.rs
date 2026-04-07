@@ -47,8 +47,21 @@ impl TokenLedger {
         Ok(())
     }
 
+    /// Supply máximo por token (evita mint infinito por bug o exploit del bridge)
+    /// 1 billón de unidades = 1,000,000 tokens con 6 decimales
+    pub const MAX_TOKEN_SUPPLY: u64 = 1_000_000_000_000_000;
+
     pub fn credit(&self, address: &str, token: &str, amount: u64) -> Result<u64> {
-        let new_bal = self.get_balance(address, token).saturating_add(amount);
+        if amount == 0 {
+            anyhow::bail!("No se puede acreditar 0 tokens");
+        }
+        let cur = self.get_balance(address, token);
+        // FIX D: usar checked_add para evitar overflow y validar supply máximo
+        let new_bal = cur.checked_add(amount)
+            .ok_or_else(|| anyhow::anyhow!("Overflow en balance de {} para {}", token, &address[..12.min(address.len())]))?;
+        if new_bal > Self::MAX_TOKEN_SUPPLY {
+            anyhow::bail!("Excede supply máximo de {} ({} unidades)", token, Self::MAX_TOKEN_SUPPLY);
+        }
         self.set_balance(address, token, new_bal)?;
         Ok(new_bal)
     }

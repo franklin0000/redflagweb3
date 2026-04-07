@@ -207,9 +207,13 @@ impl DexState {
             anyhow::bail!("LP tokens calculados = 0");
         }
 
-        pool.reserve_rf  += amount_rf;
-        pool.reserve_b   += amount_b;
-        pool.total_lp    += lp_tokens;
+        // FIX E: usar checked_add para evitar overflow silencioso en reservas
+        pool.reserve_rf  = pool.reserve_rf.checked_add(amount_rf)
+            .ok_or_else(|| anyhow::anyhow!("Overflow en reserve_rf"))?;
+        pool.reserve_b   = pool.reserve_b.checked_add(amount_b)
+            .ok_or_else(|| anyhow::anyhow!("Overflow en reserve_b"))?;
+        pool.total_lp    = pool.total_lp.checked_add(lp_tokens)
+            .ok_or_else(|| anyhow::anyhow!("Overflow en total_lp"))?;
         pool.update_price(now);
         self.save_pool(&pool)?;
 
@@ -286,13 +290,34 @@ impl DexState {
             anyhow::bail!("Pool sin liquidez");
         }
 
+        if amount_rf_in == 0 {
+            anyhow::bail!("amount_in no puede ser 0");
+        }
+        // FIX C: validar que amount_in no cause overflow en las reservas
+        let new_reserve_rf = pool.reserve_rf.checked_add(amount_rf_in)
+            .ok_or_else(|| anyhow::anyhow!("Overflow en reserva RF"))?;
+
         let (amount_out, fee) = pool.calc_swap_rf_to_b(amount_rf_in);
+        if amount_out == 0 {
+            anyhow::bail!("Swap produce 0 tokens de salida");
+        }
         if amount_out < min_amount_out {
             anyhow::bail!("Slippage excedido: esperabas {} mín, recibirías {}", min_amount_out, amount_out);
         }
+        if amount_out >= pool.reserve_b {
+            anyhow::bail!("Liquidez insuficiente en el pool");
+        }
 
-        pool.reserve_rf     += amount_rf_in;
-        pool.reserve_b       = pool.reserve_b.saturating_sub(amount_out);
+        // FIX B: verificar invariante k después del swap (xy=k no debe decrecer)
+        let k_before = pool.reserve_rf as u128 * pool.reserve_b as u128;
+        let new_reserve_b = pool.reserve_b - amount_out;
+        let k_after = new_reserve_rf as u128 * new_reserve_b as u128;
+        if k_after < k_before {
+            anyhow::bail!("Violación del invariante k: swap inválido");
+        }
+
+        pool.reserve_rf     = new_reserve_rf;
+        pool.reserve_b      = new_reserve_b;
         pool.volume_rf      += amount_rf_in;
         pool.fees_collected += fee;
         pool.update_price(now);
@@ -328,13 +353,33 @@ impl DexState {
             anyhow::bail!("Pool sin liquidez");
         }
 
+        if amount_b_in == 0 {
+            anyhow::bail!("amount_in no puede ser 0");
+        }
+        let new_reserve_b = pool.reserve_b.checked_add(amount_b_in)
+            .ok_or_else(|| anyhow::anyhow!("Overflow en reserva B"))?;
+
         let (amount_out, fee) = pool.calc_swap_b_to_rf(amount_b_in);
+        if amount_out == 0 {
+            anyhow::bail!("Swap produce 0 RF de salida");
+        }
         if amount_out < min_amount_out {
             anyhow::bail!("Slippage excedido: esperabas {} mín, recibirías {}", min_amount_out, amount_out);
         }
+        if amount_out >= pool.reserve_rf {
+            anyhow::bail!("Liquidez RF insuficiente en el pool");
+        }
 
-        pool.reserve_b      += amount_b_in;
-        pool.reserve_rf      = pool.reserve_rf.saturating_sub(amount_out);
+        // FIX B: verificar invariante k
+        let k_before = pool.reserve_rf as u128 * pool.reserve_b as u128;
+        let new_reserve_rf = pool.reserve_rf - amount_out;
+        let k_after  = new_reserve_rf as u128 * new_reserve_b as u128;
+        if k_after < k_before {
+            anyhow::bail!("Violación del invariante k: swap inválido");
+        }
+
+        pool.reserve_b      = new_reserve_b;
+        pool.reserve_rf     = new_reserve_rf;
         pool.fees_collected += fee;
         pool.update_price(now);
         self.save_pool(&pool)?;

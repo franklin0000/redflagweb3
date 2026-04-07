@@ -156,6 +156,19 @@ impl StateDB {
 
         let is_genesis = tx.sender == GENESIS_ADDRESS;
 
+        // FIX G: Validar campos básicos de la TX
+        if !is_genesis {
+            if tx.fee < redflag_core::MIN_FEE {
+                anyhow::bail!("Fee {} < mínimo {}", tx.fee, redflag_core::MIN_FEE);
+            }
+            if tx.sender == tx.receiver {
+                anyhow::bail!("Sender y receiver no pueden ser la misma dirección");
+            }
+            if tx.sender.is_empty() || tx.receiver.is_empty() {
+                anyhow::bail!("Sender o receiver vacío");
+            }
+        }
+
         // ── FIX #1: Verificar firma ML-DSA de TODA TX antes de ejecutar ─────────
         if !is_genesis && tx.sender != redflag_core::STAKE_ADDRESS && tx.sender != redflag_core::FEE_POOL_ADDRESS {
             let pubkey_bytes = hex::decode(&tx.sender).unwrap_or_default();
@@ -206,8 +219,9 @@ impl StateDB {
 
         // ── Staking: si envías RF a STAKE_ADDRESS te registras como validador ──
         if tx.receiver == redflag_core::STAKE_ADDRESS && tx.amount >= redflag_core::MIN_STAKE {
-            // Guardar stake en árbol separado: sender → amount staked
-            let stake_tree = self.db.open_tree("stakes").unwrap_or_else(|_| self.db.open_tree("stakes").unwrap());
+            // FIX F: usar ? en vez de unwrap para no paniquear el nodo
+            let stake_tree = self.db.open_tree("stakes")
+                .map_err(|e| anyhow::anyhow!("Error abriendo árbol de stakes: {}", e))?;
             let prev_stake = stake_tree.get(&tx.sender).ok().flatten()
                 .and_then(|b| b.as_ref().try_into().ok().map(u64::from_be_bytes))
                 .unwrap_or(0);

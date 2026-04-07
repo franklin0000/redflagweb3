@@ -52,9 +52,13 @@ impl RedFlagClient {
     /// FIX #5: La clave privada RF nunca viaja por HTTP.
     /// El nodo firma internamente usando su faucet/relayer key almacenada localmente.
     pub async fn mint_rf(&self, to_address: &str, amount: u64, _bridge_private_key: &str) -> Result<String> {
+        // FIX A: Fallar explícitamente si el secreto no está configurado
         let secret = std::env::var("BRIDGE_MINT_SECRET")
-            .unwrap_or_else(|_| "bridge_dev_secret".to_string());
-        // Usamos el endpoint /bridge/mint que autentica con BRIDGE_MINT_SECRET (shared secret HMAC)
+            .map_err(|_| anyhow::anyhow!("BRIDGE_MINT_SECRET no configurado en el entorno del relayer"))?;
+        if secret.is_empty() || secret == "bridge_dev_secret" {
+            anyhow::bail!("BRIDGE_MINT_SECRET usa valor por defecto inseguro — configura uno seguro");
+        }
+        // Usamos el endpoint /bridge/mint que autentica con BRIDGE_MINT_SECRET
         // y ejecuta la TX internamente en el nodo sin exponer ninguna clave privada.
         let res = self.http
             .post(format!("{}/bridge/mint", self.node_url))
@@ -76,7 +80,10 @@ impl RedFlagClient {
     /// Mintea wrapped token (wETH, wBNB, wMATIC) cuando el bridge detecta un lock EVM
     pub async fn mint_wrapped_token(&self, to: &str, token: &str, amount_units: u64) -> Result<()> {
         let secret = std::env::var("BRIDGE_MINT_SECRET")
-            .unwrap_or_else(|_| "bridge_dev_secret".to_string());
+            .map_err(|_| anyhow::anyhow!("BRIDGE_MINT_SECRET no configurado"))?;
+        if secret.is_empty() || secret == "bridge_dev_secret" {
+            anyhow::bail!("BRIDGE_MINT_SECRET inseguro");
+        }
 
         let res = self.http
             .post(format!("{}/bridge/mint", self.node_url))

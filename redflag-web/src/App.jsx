@@ -1122,6 +1122,241 @@ function encodelock(rfAddress) {
   return selector + pad(32) + pad(len) + padded;
 }
 
+// ─────────────────────────────────────────────
+// STAKING PAGE
+// ─────────────────────────────────────────────
+const STAKE_ADDRESS = 'RedFlag_Protocol_Stake_v1';
+const MIN_STAKE = 10_000_000_000; // 10,000 RF en microRF
+
+function StakingPage({ wallet }) {
+  const [info, setInfo]       = useState(null);
+  const [stakes, setStakes]   = useState([]);
+  const [total, setTotal]     = useState(0);
+  const [balance, setBalance] = useState(0);
+  const [amount, setAmount]   = useState('');
+  const [busy, setBusy]       = useState(false);
+  const [msg, setMsg]         = useState(null);
+  const [myStake, setMyStake] = useState(0);
+  const [rewards, setRewards] = useState(0);
+
+  const notify = (type, text) => { setMsg({ type, text }); setTimeout(() => setMsg(null), 5000); };
+
+  const fetchData = useCallback(async () => {
+    try {
+      const [inf, st] = await Promise.all([sdk.getStakingInfo(), sdk.getStakes()]);
+      setInfo(inf);
+      setStakes(st.stakes || []);
+      setTotal(st.total_staked || 0);
+      if (wallet) {
+        const bal = await sdk.getBalance(wallet.address);
+        setBalance(bal.balance || 0);
+        const mine = (st.stakes || []).find(s => s.address === wallet.address);
+        setMyStake(mine?.staked_rf || 0);
+      }
+    } catch {}
+  }, [wallet]);
+
+  useEffect(() => { fetchData(); const iv = setInterval(fetchData, 8000); return () => clearInterval(iv); }, [fetchData]);
+
+  // Estimar recompensas diarias: 1 RF + avg TXs por vértice, 5 vértices/seg
+  useEffect(() => {
+    if (myStake > 0 && stakes.length > 0) {
+      // Estimación: 5 vértices/seg × 86400 seg / num_validators
+      const daily = Math.floor((5 * 86400) / Math.max(stakes.length, 1));
+      setRewards(daily);
+    }
+  }, [myStake, stakes]);
+
+  const handleStake = async () => {
+    if (!wallet) return notify('err', 'Conecta tu wallet primero');
+    const amt = Number(amount);
+    if (amt < MIN_STAKE) return notify('err', `Mínimo ${MIN_STAKE / 1_000_000} RF para hacer stake`);
+    if (balance < amt + 1) return notify('err', `Saldo insuficiente: tienes ${balance} RF`);
+    setBusy(true);
+    try {
+      const res = await sdk.walletSend(wallet.private_key_hex, STAKE_ADDRESS, amt, 1);
+      if (res.accepted) {
+        notify('ok', `✅ Stake enviado: ${amt / 1_000_000} RF → te conviertes en validador en la próxima ronda`);
+        setAmount('');
+        setTimeout(fetchData, 3000);
+      } else notify('err', res.message || 'Error');
+    } catch(e) { notify('err', e.response?.data?.error || e.message); }
+    setBusy(false);
+  };
+
+  const pct = total > 0 && myStake > 0 ? (myStake / total * 100).toFixed(2) : 0;
+
+  return (
+    <div style={{display:'flex',flexDirection:'column',gap:16}}>
+      <SectionHdr icon={Shield} title="Staking — Sé un Validador" color="var(--green)"
+        right={<span className="bdg bdg-g" style={{fontSize:11}}>{stakes.length} validadores activos</span>}
+      />
+      {msg && <Alert type={msg.type}>{msg.text}</Alert>}
+
+      {/* Stats top */}
+      <div style={{display:'grid',gridTemplateColumns:'repeat(4,1fr)',gap:12}}>
+        <StatCard icon={Shield}     label="Total Staked"     value={`${fmtN(Math.floor(total/1_000_000))} RF`} color="var(--green)"/>
+        <StatCard icon={Users}      label="Validadores"      value={stakes.length} color="var(--cyan)"/>
+        <StatCard icon={Zap}        label="Rondas/seg"       value="5" sub="200ms/ronda" color="var(--yellow)"/>
+        <StatCard icon={TrendingUp} label="Mi stake"         value={myStake > 0 ? `${fmtN(Math.floor(myStake/1_000_000))} RF` : '—'} color="var(--purple)"/>
+      </div>
+
+      <div style={{display:'grid',gridTemplateColumns:'1fr 380px',gap:16}}>
+
+        {/* Lista de validadores */}
+        <div style={{display:'flex',flexDirection:'column',gap:12}}>
+          <div className="card fi">
+            <div style={{fontWeight:700,marginBottom:12,display:'flex',justifyContent:'space-between'}}>
+              <span>Validadores activos</span>
+              <span style={{fontSize:11,color:'var(--txl)'}}>{fmtN(Math.floor(total/1_000_000))} RF total stakeado</span>
+            </div>
+            <table className="tbl">
+              <thead><tr><th>#</th><th>Dirección</th><th>Stake (RF)</th><th>% Red</th><th>Recompensas/día</th></tr></thead>
+              <tbody>
+                {stakes.map((s,i) => {
+                  const p = total > 0 ? (s.staked_rf / total * 100).toFixed(1) : 0;
+                  const dailyEst = Math.floor((5 * 86400) / Math.max(stakes.length, 1));
+                  const isMe = wallet && s.address === wallet.address;
+                  return (
+                    <tr key={i} style={isMe ? {background:'var(--bg3)',outline:'1px solid var(--green)'} : {}}>
+                      <td style={{color:'var(--txl)'}}>{i+1}</td>
+                      <td style={{fontFamily:'monospace',fontSize:11}}>
+                        {short(s.address, 12)}
+                        {isMe && <span className="bdg bdg-g" style={{marginLeft:6,fontSize:9}}>YO</span>}
+                      </td>
+                      <td style={{fontWeight:700,color:'var(--green)'}}>{fmtN(Math.floor(s.staked_rf/1_000_000))}</td>
+                      <td>
+                        <div style={{display:'flex',alignItems:'center',gap:6}}>
+                          <div style={{width:60,height:4,background:'var(--bg3)',borderRadius:2}}>
+                            <div style={{width:`${p}%`,height:'100%',background:'var(--green)',borderRadius:2}}/>
+                          </div>
+                          <span style={{fontSize:11}}>{p}%</span>
+                        </div>
+                      </td>
+                      <td style={{color:'var(--yellow)',fontWeight:700}}>~{fmtN(dailyEst)} RF</td>
+                    </tr>
+                  );
+                })}
+                {stakes.length === 0 && (
+                  <tr><td colSpan={5} style={{textAlign:'center',padding:24,color:'var(--txl)'}}>
+                    Sé el primero en hacer stake y convertirte en validador
+                  </td></tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+
+          {/* Cómo funciona */}
+          <div className="card fi" style={{fontSize:13,lineHeight:1.8}}>
+            <div style={{fontWeight:700,marginBottom:8,color:'var(--cyan)'}}>¿Cómo funciona el staking?</div>
+            <div style={{display:'flex',flexDirection:'column',gap:6,color:'var(--txl)'}}>
+              {[
+                ['1', 'Instala el nodo', 'curl -sSf https://redflagweb3-app.onrender.com/install.sh | bash'],
+                ['2', 'Consigue tu dirección RF', 'Se genera automáticamente al iniciar el nodo'],
+                ['3', 'Envía 10,000+ RF a STAKE_ADDRESS', 'Desde esta wallet o cualquier wallet RF'],
+                ['4', 'Tu nodo se registra como validador', 'Automático en la siguiente ronda (200ms)'],
+                ['5', 'Gana RF por cada bloque', '1 RF base + 0.1 RF por TX incluida'],
+              ].map(([n,title,desc])=>(
+                <div key={n} style={{display:'flex',gap:12,alignItems:'flex-start'}}>
+                  <span style={{minWidth:22,height:22,borderRadius:'50%',background:'var(--green)',color:'#000',display:'flex',alignItems:'center',justifyContent:'center',fontWeight:700,fontSize:11}}>{n}</span>
+                  <div>
+                    <div style={{fontWeight:600,color:'var(--tx)'}}>{title}</div>
+                    <div style={{fontSize:11,color:'var(--txl)',fontFamily:n==='3'||n==='1'?'monospace':'inherit'}}>{desc}</div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+
+        {/* Panel stake */}
+        <div style={{display:'flex',flexDirection:'column',gap:12}}>
+
+          {/* Mi posición */}
+          {myStake > 0 && (
+            <div className="card fi" style={{border:'1px solid var(--green)'}}>
+              <div style={{fontWeight:700,color:'var(--green)',marginBottom:10,display:'flex',alignItems:'center',gap:8}}>
+                <CheckCircle2 size={16}/> Eres validador activo
+              </div>
+              <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:8,fontSize:12}}>
+                <div style={{background:'var(--bg3)',borderRadius:8,padding:'10px 12px'}}>
+                  <div style={{color:'var(--txl)',marginBottom:2}}>Mi stake</div>
+                  <div style={{fontWeight:700,color:'var(--green)'}}>{fmtN(Math.floor(myStake/1_000_000))} RF</div>
+                </div>
+                <div style={{background:'var(--bg3)',borderRadius:8,padding:'10px 12px'}}>
+                  <div style={{color:'var(--txl)',marginBottom:2}}>% de la red</div>
+                  <div style={{fontWeight:700,color:'var(--cyan)'}}>{pct}%</div>
+                </div>
+                <div style={{background:'var(--bg3)',borderRadius:8,padding:'10px 12px'}}>
+                  <div style={{color:'var(--txl)',marginBottom:2}}>Recompensas/día est.</div>
+                  <div style={{fontWeight:700,color:'var(--yellow)'}}>~{fmtN(rewards)} RF</div>
+                </div>
+                <div style={{background:'var(--bg3)',borderRadius:8,padding:'10px 12px'}}>
+                  <div style={{color:'var(--txl)',marginBottom:2}}>APY estimado</div>
+                  <div style={{fontWeight:700,color:'var(--purple)'}}>
+                    {myStake > 0 ? `~${((rewards * 365) / (myStake / 1_000_000) * 100).toFixed(0)}%` : '—'}
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Hacer stake */}
+          <div className="card fi" style={{display:'flex',flexDirection:'column',gap:12}}>
+            <div style={{fontWeight:700,fontSize:14,color:'var(--green)',display:'flex',alignItems:'center',gap:8}}>
+              <Shield size={16}/> Hacer Stake
+            </div>
+            <div style={{fontSize:12,color:'var(--txl)'}}>
+              Saldo disponible: <span style={{color:'var(--tx)',fontWeight:700}}>{fmtN(balance)} RF</span>
+            </div>
+            <div>
+              <div style={{fontSize:11,color:'var(--txl)',marginBottom:4}}>Cantidad a stakear (mín. 10,000 RF)</div>
+              <input className="inp" type="number" placeholder="10000000000"
+                value={amount} onChange={e=>setAmount(e.target.value)}
+                style={{width:'100%',boxSizing:'border-box'}}
+              />
+              <div style={{fontSize:10,color:'var(--txl)',marginTop:4}}>
+                Destino: <span style={{fontFamily:'monospace',color:'var(--green)'}}>{STAKE_ADDRESS}</span>
+              </div>
+            </div>
+
+            {amount && Number(amount) >= MIN_STAKE && (
+              <div style={{background:'var(--bg3)',borderRadius:8,padding:'10px 12px',fontSize:12}}>
+                <div style={{display:'flex',justifyContent:'space-between',marginBottom:4}}>
+                  <span style={{color:'var(--txl)'}}>Recompensa/día estimada</span>
+                  <span style={{fontWeight:700,color:'var(--yellow)'}}>~{fmtN(Math.floor(5*86400/Math.max(stakes.length+1,1)))} RF</span>
+                </div>
+                <div style={{display:'flex',justifyContent:'space-between'}}>
+                  <span style={{color:'var(--txl)'}}>Registro como validador</span>
+                  <span style={{color:'var(--green)'}}>Inmediato</span>
+                </div>
+              </div>
+            )}
+
+            {!wallet && <Alert type="wrn">Conecta tu wallet para hacer stake</Alert>}
+            <button className="btn-p" style={{background:'var(--green)',width:'100%'}} onClick={handleStake} disabled={busy||!wallet}>
+              {busy ? <RefreshCw size={14} className="spin"/> : <Shield size={14}/>}
+              {busy ? 'Procesando…' : 'Stake & Convertirme en Validador'}
+            </button>
+          </div>
+
+          {/* Info económica */}
+          <div className="card fi" style={{fontSize:12,color:'var(--txl)',lineHeight:1.7}}>
+            <div style={{fontWeight:700,color:'var(--tx)',marginBottom:8}}>Economía del validador</div>
+            <div>• <span style={{color:'var(--green)'}}>1 RF</span> base por cada vértice producido</div>
+            <div>• <span style={{color:'var(--green)'}}>+0.1 RF</span> por cada TX incluida</div>
+            <div>• Rondas cada <span style={{color:'var(--yellow)'}}>200ms</span> = 5 bloques/seg</div>
+            <div>• ~<span style={{color:'var(--purple)'}}>{fmtN(5*86400)} vértices/día</span> por validador</div>
+            <div style={{marginTop:8,paddingTop:8,borderTop:'1px solid var(--bdr)'}}>
+              Cuantos más validadores haya, más se distribuyen los bloques y más segura y rápida es la red.
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function BridgePage({ wallet }) {
   const [chain, setChain]     = useState('BSC');
   const [amount, setAmount]   = useState('');
@@ -1256,6 +1491,7 @@ function BridgePage({ wallet }) {
 const PAGES = [
   {id:'wallet',   label:'Wallet',      icon:Wallet},
   {id:'dashboard',label:'Dashboard',   icon:Activity},
+  {id:'staking',  label:'Staking',     icon:Shield},
   {id:'bridge',   label:'Bridge',      icon:ArrowLeftRight},
   {id:'dex',      label:'DEX Trading', icon:TrendingUp},
   {id:'explorer', label:'Explorer',    icon:Search},
@@ -1319,7 +1555,7 @@ export default function App() {
   if(!ks && !wallet)        return <Onboarding onComplete={w=>{ setWallet(w); setPage('wallet'); }}/>;
   if(ks  && !wallet)        return <LockScreen onUnlock={w=>{ setWallet(w); setPage('wallet'); }}/>;
 
-  const pageTitles = {wallet:'My Wallet',dashboard:'Dashboard',dex:'DEX Trading',explorer:'Block Explorer',network:'Network Info',settings:'Settings'};
+  const pageTitles = {wallet:'My Wallet',dashboard:'Dashboard',staking:'Staking',dex:'DEX Trading',explorer:'Block Explorer',network:'Network Info',settings:'Settings'};
 
   return (
     <div className="shell">
@@ -1367,6 +1603,7 @@ export default function App() {
         <div className="page">
           {page==='wallet'    && <WalletPage    wallet={wallet} wsData={wsData}/>}
           {page==='dashboard' && <DashboardPage stats={stats} vertices={vertices} mempool={mempool} roundEk={roundEk} tpsHist={tpsHist} online={online}/>}
+          {page==='staking'   && <StakingPage   wallet={wallet}/>}
           {page==='bridge'    && <BridgePage    wallet={wallet}/>}
           {page==='dex'       && <DexPage       wallet={wallet}/>}
           {page==='explorer'  && <ExplorerPage/>}

@@ -79,6 +79,10 @@ class RedFlagSDK {
         })).data;
     }
 
+    // ── Staking ──
+    async getStakingInfo()   { return (await axios.get(`${this.nodeUrl}/staking/info`)).data; }
+    async getStakes()        { return (await axios.get(`${this.nodeUrl}/staking/stakes`)).data; }
+
     // ── Wallet API ──
     async walletNew() {
         // En una fase Pro, esto solo devuelve la configuración inicial.

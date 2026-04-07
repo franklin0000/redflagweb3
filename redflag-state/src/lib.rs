@@ -1,6 +1,7 @@
 use serde::{Serialize, Deserialize};
 use sled::{Db, Tree};
 use redflag_core::{Transaction, CHAIN_ID, GENESIS_ADDRESS, FEE_POOL_ADDRESS, GENESIS_BALANCE};
+use redflag_crypto::Verifier;
 use rayon::prelude::*;
 use redflag_vm::ContractVm;
 
@@ -154,6 +155,17 @@ impl StateDB {
         }
 
         let is_genesis = tx.sender == GENESIS_ADDRESS;
+
+        // ── FIX #1: Verificar firma ML-DSA de TODA TX antes de ejecutar ─────────
+        if !is_genesis && tx.sender != redflag_core::STAKE_ADDRESS && tx.sender != redflag_core::FEE_POOL_ADDRESS {
+            let pubkey_bytes = hex::decode(&tx.sender).unwrap_or_default();
+            let mut tx_for_verify = tx.clone();
+            let signature = std::mem::take(&mut tx_for_verify.signature);
+            let msg = bincode::serialize(&tx_for_verify).unwrap_or_default();
+            if Verifier::verify(&pubkey_bytes, &msg, &signature).is_err() {
+                anyhow::bail!("Firma ML-DSA inválida para TX de {}", &tx.sender[..16.min(tx.sender.len())]);
+            }
+        }
 
         let mut sender = self.get_account(&tx.sender).unwrap_or(Account {
             address: tx.sender.clone(), balance: 0, nonce: 0,

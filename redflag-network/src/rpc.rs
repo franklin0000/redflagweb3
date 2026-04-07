@@ -725,12 +725,27 @@ async fn wallet_faucet(
         }
     }
 
-    const MAX_FAUCET: u64 = 10_000;
+    // FIX #3: Validar dirección RF (debe ser hex de 32+ bytes = 64+ chars)
+    if req.address.len() < 64 || hex::decode(&req.address).is_err() {
+        return (StatusCode::BAD_REQUEST, Json(TxResponse {
+            accepted: false,
+            message: "Dirección RF inválida (debe ser clave pública ML-DSA hex)".into(),
+            tx_hash: None,
+        }));
+    }
+    // No permitir faucet a direcciones especiales del protocolo
+    if req.address.starts_with("RedFlag_") {
+        return (StatusCode::BAD_REQUEST, Json(TxResponse {
+            accepted: false, message: "Dirección no permitida".into(), tx_hash: None,
+        }));
+    }
+
+    const MAX_FAUCET: u64 = 1_000; // Reducido de 10,000 a 1,000 RF máximo por solicitud
     let faucet_bal = state.consensus.state.get_balance(&state.faucet_address);
     if faucet_bal < MIN_FEE + 1 {
         return (StatusCode::SERVICE_UNAVAILABLE, Json(TxResponse { accepted: false, message: "Faucet vacío".into(), tx_hash: None }));
     }
-    let amount = req.amount.unwrap_or(1_000).min(MAX_FAUCET);
+    let amount = req.amount.unwrap_or(100).min(MAX_FAUCET); // default 100, max 1000
     if faucet_bal < amount + MIN_FEE {
         return (StatusCode::BAD_REQUEST, Json(TxResponse { accepted: false, message: format!("Faucet solo tiene {} RF", faucet_bal), tx_hash: None }));
     }
@@ -780,16 +795,47 @@ async fn bridge_mint(
     State(state): State<ApiState>,
     Json(req): Json<BridgeMintRequest>,
 ) -> (StatusCode, Json<serde_json::Value>) {
-    // Autenticar el relayer con el secreto del bridge
+    // FIX #6: Verificar secreto con timing-safe comparison (evita timing attacks)
     let expected = std::env::var("BRIDGE_MINT_SECRET")
         .unwrap_or_else(|_| "bridge_dev_secret".to_string());
-    if req.bridge_secret != expected {
+    // Comparación de longitud constante para evitar timing side-channel
+    let secret_ok = req.bridge_secret.len() == expected.len()
+        && req.bridge_secret.as_bytes().iter()
+            .zip(expected.as_bytes().iter())
+            .fold(0u8, |acc, (a, b)| acc | (a ^ b)) == 0;
+    if !secret_ok {
+        // Log intento fallido sin revelar el secreto esperado
+        tracing::warn!("Bridge mint rechazado: secreto incorrecto (IP desconocida)");
         return (StatusCode::UNAUTHORIZED, Json(serde_json::json!({ "error": "Unauthorized" })));
     }
+    // Validar cantidad máxima por mint (anti-exploit)
+    const MAX_MINT_PER_TX: u64 = 1_000_000_000_000; // 1M RF máximo por mint
+    if req.amount > MAX_MINT_PER_TX {
+        return (StatusCode::BAD_REQUEST, Json(serde_json::json!({ "error": "Cantidad excede el límite máximo por mint" })));
+    }
+    // Validar destino no sea dirección del protocolo
+    if req.to.starts_with("RedFlag_") {
+        return (StatusCode::BAD_REQUEST, Json(serde_json::json!({ "error": "Destino inválido" })));
+    }
 
-    // Validar token soportado
-    if !redflag_state::SUPPORTED_TOKENS.contains(&req.token.as_str()) {
+    // Validar token soportado (RF = nativo, wETH/wBNB/wMATIC = wrapped)
+    let is_native_rf = req.token == "RF";
+    if !is_native_rf && !redflag_state::SUPPORTED_TOKENS.contains(&req.token.as_str()) {
         return (StatusCode::BAD_REQUEST, Json(serde_json::json!({ "error": format!("Token {} no soportado", req.token) })));
+    }
+
+    // RF nativo: acreditar directamente en StateDB
+    if is_native_rf {
+        if let Some(mut acc) = state.consensus.state.get_account(&req.to) {
+            acc.balance = acc.balance.saturating_add(req.amount);
+            let _ = state.consensus.state.save_account_pub(&acc);
+        } else {
+            let _ = state.consensus.state.save_account_pub(&redflag_state::Account {
+                address: req.to.clone(), balance: req.amount, nonce: 0,
+            });
+        }
+        emit(&state.ws_tx, "bridge_mint", serde_json::json!({ "to": &req.to[..16.min(req.to.len())], "token": "RF", "amount": req.amount }));
+        return (StatusCode::OK, Json(serde_json::json!({ "success": true, "to": req.to, "token": "RF", "amount": req.amount })));
     }
 
     match state.consensus.state.tokens.credit(&req.to, &req.token, req.amount) {
@@ -1108,14 +1154,12 @@ async fn dex_position(
 
 #[derive(Deserialize)]
 struct ValidatorApplyRequest {
-    /// Nombre o apodo del operador
-    name: String,
-    /// Dirección RF del validador (clave pública ML-DSA)
-    address: String,
-    /// Descripción / motivación
+    name:        String,
+    address:     String,
     description: Option<String>,
-    /// Multiaddr P2P del nodo (ej: /ip4/1.2.3.4/tcp/9000/p2p/12D3...)
-    multiaddr: Option<String>,
+    multiaddr:   Option<String>,
+    /// Firma ML-DSA de "name:address" con la clave privada del nodo (autenticación)
+    signature:   Option<String>,
 }
 
 async fn get_validators(State(state): State<ApiState>) -> Json<serde_json::Value> {
@@ -1142,17 +1186,28 @@ async fn validator_apply(
     if req.name.trim().is_empty() || req.address.trim().is_empty() {
         return (StatusCode::BAD_REQUEST, Json(serde_json::json!({ "error": "name y address son obligatorios" })));
     }
-    if req.address.len() < 16 {
-        return (StatusCode::BAD_REQUEST, Json(serde_json::json!({ "error": "address inválida" })));
+    // FIX #4a: Dirección debe ser hex válido de al menos 64 chars (clave pública ML-DSA)
+    if req.address.len() < 64 || hex::decode(&req.address).is_err() {
+        return (StatusCode::BAD_REQUEST, Json(serde_json::json!({ "error": "address debe ser clave publica ML-DSA hex" })));
     }
+    // FIX #4b: Si se provee firma, verificarla. Si no, guardar como "unverified"
+    let verified = if let Some(sig_hex) = &req.signature {
+        let pubkey = hex::decode(&req.address).unwrap_or_default();
+        let sig    = hex::decode(sig_hex).unwrap_or_default();
+        let msg    = format!("{}:{}", req.name.trim(), req.address.trim());
+        Verifier::verify(&pubkey, msg.as_bytes(), &sig).is_ok()
+    } else {
+        false
+    };
 
     let entry = serde_json::json!({
-        "name": req.name.trim(),
-        "address": req.address.trim(),
+        "name":        req.name.trim(),
+        "address":     req.address.trim(),
         "description": req.description.unwrap_or_default(),
-        "multiaddr": req.multiaddr.unwrap_or_default(),
-        "applied_at": now_secs(),
-        "status": "pending",
+        "multiaddr":   req.multiaddr.unwrap_or_default(),
+        "applied_at":  now_secs(),
+        "verified":    verified,
+        "status":      if verified { "pending_verified" } else { "pending_unverified" },
     });
 
     // Persistir en disco

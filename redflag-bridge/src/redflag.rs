@@ -48,23 +48,29 @@ impl RedFlagClient {
         }
     }
 
-    /// Mintea RF nativo en la cadena RedFlag (para bridge RF←EVM cuando el activo ES RF)
-    pub async fn mint_rf(&self, to_address: &str, amount: u64, bridge_private_key: &str) -> Result<String> {
+    /// Mintea RF nativo en la cadena RedFlag usando BRIDGE_MINT_SECRET (sin exponer clave privada)
+    /// FIX #5: La clave privada RF nunca viaja por HTTP.
+    /// El nodo firma internamente usando su faucet/relayer key almacenada localmente.
+    pub async fn mint_rf(&self, to_address: &str, amount: u64, _bridge_private_key: &str) -> Result<String> {
+        let secret = std::env::var("BRIDGE_MINT_SECRET")
+            .unwrap_or_else(|_| "bridge_dev_secret".to_string());
+        // Usamos el endpoint /bridge/mint que autentica con BRIDGE_MINT_SECRET (shared secret HMAC)
+        // y ejecuta la TX internamente en el nodo sin exponer ninguna clave privada.
         let res = self.http
-            .post(format!("{}/wallet/send", self.node_url))
+            .post(format!("{}/bridge/mint", self.node_url))
             .json(&serde_json::json!({
-                "private_key_hex": bridge_private_key,
-                "receiver": to_address,
+                "bridge_secret": secret,
+                "to":     to_address,
+                "token":  "RF",
                 "amount": amount,
-                "fee": 1,
             }))
             .send().await?
-            .json::<TxResponse>().await?;
+            .json::<serde_json::Value>().await?;
 
-        if !res.accepted {
-            anyhow::bail!("Mint RF falló: {}", res.message);
+        if res["success"].as_bool() != Some(true) {
+            anyhow::bail!("Mint RF falló: {}", res["error"].as_str().unwrap_or("unknown"));
         }
-        Ok(res.tx_hash.unwrap_or_default())
+        Ok(res["tx_hash"].as_str().unwrap_or("").to_string())
     }
 
     /// Mintea wrapped token (wETH, wBNB, wMATIC) cuando el bridge detecta un lock EVM

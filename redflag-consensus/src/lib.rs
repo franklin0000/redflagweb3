@@ -325,6 +325,19 @@ impl ConsensusEngine {
         }
 
         if let Some(v) = self.dag.get_vertex(vertex_id) {
+            // ── FIX #2: Verificar firma del autor del vértice ─────────────────
+            // Evita que un nodo malicioso fabrique vértices con autor falso
+            // y robe recompensas de otros validadores.
+            {
+                let mut v_for_verify = v.as_ref().clone();
+                let sig = std::mem::take(&mut v_for_verify.signature);
+                let vid = v_for_verify.id();
+                if !v.author.is_empty() && redflag_crypto::Verifier::verify(&v.author, &vid, &sig).is_err() {
+                    eprintln!("⚠️  Vértice {} rechazado: firma de autor inválida", hex::encode(&vertex_id[..4]));
+                    return ordered_txs;
+                }
+            }
+
             let mut parents: Vec<_> = v.parents.iter().collect();
             parents.sort();
             for parent_id in parents {

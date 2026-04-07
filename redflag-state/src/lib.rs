@@ -92,7 +92,7 @@ impl StateDB {
 
     pub fn get_account(&self, address: &str) -> Option<Account> {
         self.db.get(address).ok().flatten()
-            .and_then(|b| bincode::deserialize::<Account>(&b).ok())
+            .and_then(|b| bincode::serde::decode_from_slice::<Account, _>(&b, bincode::config::standard()).map(|(v, _)| v).ok())
     }
 
     /// Historial para una dirección específica
@@ -100,7 +100,7 @@ impl StateDB {
         let mut history = Vec::new();
         for item in self.tx_history.iter() {
             if let Ok((_, bytes)) = item {
-                if let Ok(tx) = bincode::deserialize::<Transaction>(&bytes) {
+                if let Ok(tx) = bincode::serde::decode_from_slice::<Transaction, _>(&bytes, bincode::config::standard()).map(|(v, _)| v) {
                     if tx.sender == address || tx.receiver == address {
                         history.push(tx);
                     }
@@ -115,7 +115,7 @@ impl StateDB {
     pub fn get_tx_by_hash(&self, hash_hex: &str) -> Option<Transaction> {
         let hash_bytes = hex::decode(hash_hex).ok()?;
         self.tx_index.get(&hash_bytes).ok().flatten()
-            .and_then(|b| bincode::deserialize::<Transaction>(&b).ok())
+            .and_then(|b| bincode::serde::decode_from_slice::<Transaction, _>(&b, bincode::config::standard()).map(|(v, _)| v).ok())
     }
 
     /// Últimas N transacciones globales (para dashboard)
@@ -123,7 +123,7 @@ impl StateDB {
         let mut txs: Vec<Transaction> = self.tx_history.iter().rev()
             .take(limit)
             .filter_map(|r| r.ok())
-            .filter_map(|(_, b)| bincode::deserialize::<Transaction>(&b).ok())
+            .filter_map(|(_, b)| bincode::serde::decode_from_slice::<Transaction, _>(&b, bincode::config::standard()).map(|(v, _)| v).ok())
             .collect();
         txs.sort_by(|a,b| b.timestamp.cmp(&a.timestamp));
         txs
@@ -174,7 +174,7 @@ impl StateDB {
             let pubkey_bytes = hex::decode(&tx.sender).unwrap_or_default();
             let mut tx_for_verify = tx.clone();
             let signature = std::mem::take(&mut tx_for_verify.signature);
-            let msg = bincode::serialize(&tx_for_verify).unwrap_or_default();
+            let msg = bincode::serde::encode_to_vec(&tx_for_verify, bincode::config::standard()).unwrap_or_default();
             if Verifier::verify(&pubkey_bytes, &msg, &signature).is_err() {
                 anyhow::bail!("Firma ML-DSA inválida para TX de {}", &tx.sender[..16.min(tx.sender.len())]);
             }
@@ -234,7 +234,7 @@ impl StateDB {
         // Smart contracts
         if let Some(vm) = &self.vm {
             if tx.receiver == "DEPLOY" && !tx.data.is_empty() {
-                if let Ok(abi) = bincode::deserialize::<redflag_vm::ContractAbi>(&tx.data) {
+                if let Ok(abi) = bincode::serde::decode_from_slice::<redflag_vm::ContractAbi, _>(&tx.data, bincode::config::standard()).map(|(v, _)| v) {
                     let _ = vm.deploy(tx.data.clone(), &tx.sender, tx.nonce, 0, vec![], abi);
                 }
             } else if !tx.data.is_empty() {
@@ -243,7 +243,7 @@ impl StateDB {
         }
 
         // Guardar en historial (por dirección) + índice global (por hash)
-        let tx_bytes = bincode::serialize(tx)?;
+        let tx_bytes = bincode::serde::encode_to_vec(tx, bincode::config::standard())?;
         let tx_hash = blake3::hash(&tx_bytes);
 
         let history_key = format!("{:020}_{}_{}",
@@ -269,7 +269,7 @@ impl StateDB {
     }
 
     fn save_account(&self, account: &Account) -> Result<(), anyhow::Error> {
-        self.db.insert(&account.address, bincode::serialize(account)?)?;
+        self.db.insert(&account.address, bincode::serde::encode_to_vec(account, bincode::config::standard())?)?;
         Ok(())
     }
 
@@ -353,7 +353,7 @@ mod tests {
             signature: vec![],
             timestamp: 0,
         };
-        let msg = bincode::serialize(&tx).unwrap();
+        let msg = bincode::serde::encode_to_vec(&tx, bincode::config::standard()).unwrap();
         tx.signature = keypair.sign(&msg).unwrap();
         tx
     }
@@ -507,7 +507,7 @@ mod tests {
         let (bob_hex, _) = gen_account();
         let mut tx = signed_tx(&alice_kp, &alice_hex, &bob_hex, 100, MIN_FEE, 0);
         tx.chain_id = 9999; // wrong chain
-        let msg = bincode::serialize(&tx).unwrap();
+        let msg = bincode::serde::encode_to_vec(&tx, bincode::config::standard()).unwrap();
         tx.signature = alice_kp.sign(&msg).unwrap();
 
         state.apply_transactions(&[tx]).unwrap();

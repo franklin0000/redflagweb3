@@ -90,7 +90,7 @@ async fn test_dag_sync_parent_fetching() -> Result<(), Box<dyn std::error::Error
     };
     let v2_id = v2.id();
     let _ = node_a.consensus.dag.insert_vertex(v2.clone());
-    node_a.broadcast_message(NetworkMessage::NewBlock(bincode::serialize(&v2).unwrap())).await?;
+    node_a.broadcast_message(NetworkMessage::NewBlock(bincode::serde::encode_to_vec(&v2, bincode::config::standard()).unwrap())).await?;
 
     let timeout = time::sleep(Duration::from_secs(10));
     tokio::pin!(timeout);
@@ -108,8 +108,8 @@ async fn test_dag_sync_parent_fetching() -> Result<(), Box<dyn std::error::Error
                 } else if let Some(libp2p::swarm::SwarmEvent::Behaviour(
                     RedFlagBehaviourEvent::Gossipsub(libp2p::gossipsub::Event::Message { propagation_source, message, .. })
                 )) = event_b {
-                    if let Ok(NetworkMessage::NewBlock(data)) = bincode::deserialize::<NetworkMessage>(&message.data) {
-                        if let Ok(vertex) = bincode::deserialize::<Vertex>(&data) {
+                    if let Ok(NetworkMessage::NewBlock(data)) = bincode::serde::decode_from_slice::<NetworkMessage, _>(&message.data, bincode::config::standard()).map(|(v, _)| v) {
+                        if let Ok(vertex) = bincode::serde::decode_from_slice::<Vertex, _>(&data, bincode::config::standard()).map(|(v, _)| v) {
                             for parent_id in &vertex.parents {
                                 if node_b.consensus.dag.get_vertex(parent_id).is_none() {
                                     node_b.request_vertex(propagation_source, *parent_id);

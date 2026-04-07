@@ -147,18 +147,18 @@ impl DexState {
 
     pub fn get_pool(&self, pool_id: &str) -> Option<LiquidityPool> {
         self.pools.get(pool_id).ok().flatten()
-            .and_then(|b| bincode::deserialize(&b).ok())
+            .and_then(|b| bincode::serde::decode_from_slice::<_, _>(&b, bincode::config::standard()).map(|(v, _)| v).ok())
     }
 
     pub fn save_pool(&self, pool: &LiquidityPool) -> Result<()> {
-        self.pools.insert(&pool.pool_id, bincode::serialize(pool)?)?;
+        self.pools.insert(&pool.pool_id, bincode::serde::encode_to_vec(pool, bincode::config::standard())?)?;
         Ok(())
     }
 
     pub fn list_pools(&self) -> Vec<LiquidityPool> {
         self.pools.iter()
             .filter_map(|r| r.ok())
-            .filter_map(|(_, b)| bincode::deserialize(&b).ok())
+            .filter_map(|(_, b)| bincode::serde::decode_from_slice::<_, _>(&b, bincode::config::standard()).map(|(v, _)| v).ok())
             .collect()
     }
 
@@ -220,7 +220,7 @@ impl DexState {
         // Actualizar posición del proveedor
         let pos_key = format!("{}_{}", provider, pool_id);
         let mut pos = self.positions.get(&pos_key).ok().flatten()
-            .and_then(|b| bincode::deserialize::<LpPosition>(&b).ok())
+            .and_then(|b| bincode::serde::decode_from_slice::<LpPosition, _>(&b, bincode::config::standard()).map(|(v, _)| v).ok())
             .unwrap_or(LpPosition {
                 provider: provider.to_string(),
                 pool_id: pool_id.to_string(),
@@ -228,7 +228,7 @@ impl DexState {
                 added_at: now,
             });
         pos.lp_tokens += lp_tokens;
-        self.positions.insert(&pos_key, bincode::serialize(&pos)?)?;
+        self.positions.insert(&pos_key, bincode::serde::encode_to_vec(&pos, bincode::config::standard())?)?;
 
         println!("💧 Add liquidity: {} RF + {} {} → {} LP ({})",
             amount_rf, amount_b, pool.token_b, lp_tokens, pool_id);
@@ -248,7 +248,7 @@ impl DexState {
             .ok_or_else(|| anyhow::anyhow!("Pool no existe"))?;
         let pos_key = format!("{}_{}", provider, pool_id);
         let mut pos = self.positions.get(&pos_key).ok().flatten()
-            .and_then(|b| bincode::deserialize::<LpPosition>(&b).ok())
+            .and_then(|b| bincode::serde::decode_from_slice::<LpPosition, _>(&b, bincode::config::standard()).map(|(v, _)| v).ok())
             .ok_or_else(|| anyhow::anyhow!("No tienes posición en este pool"))?;
 
         if lp_tokens > pos.lp_tokens {
@@ -265,7 +265,7 @@ impl DexState {
         self.save_pool(&pool)?;
 
         pos.lp_tokens -= lp_tokens;
-        self.positions.insert(&pos_key, bincode::serialize(&pos)?)?;
+        self.positions.insert(&pos_key, bincode::serde::encode_to_vec(&pos, bincode::config::standard())?)?;
 
         println!("🔥 Remove liquidity: {} LP → {} RF + {} {} ({})",
             lp_tokens, amount_rf, amount_b, pool.token_b, pool_id);
@@ -402,7 +402,7 @@ impl DexState {
 
     fn record_swap(&self, record: SwapRecord) -> Result<()> {
         let key = format!("{:020}_{}", record.timestamp, &record.pool_id);
-        self.swap_history.insert(key, bincode::serialize(&record)?)?;
+        self.swap_history.insert(key, bincode::serde::encode_to_vec(&record, bincode::config::standard())?)?;
         Ok(())
     }
 
@@ -415,7 +415,7 @@ impl DexState {
     pub fn get_swap_history(&self, pool_id: &str, limit: usize) -> Vec<SwapRecord> {
         self.swap_history.iter().rev()
             .filter_map(|r| r.ok())
-            .filter_map(|(_, b)| bincode::deserialize::<SwapRecord>(&b).ok())
+            .filter_map(|(_, b)| bincode::serde::decode_from_slice::<SwapRecord, _>(&b, bincode::config::standard()).map(|(v, _)| v).ok())
             .filter(|s| s.pool_id == pool_id)
             .take(limit)
             .collect()
@@ -438,7 +438,7 @@ impl DexState {
     pub fn get_lp_position(&self, provider: &str, pool_id: &str) -> Option<LpPosition> {
         let key = format!("{}_{}", provider, pool_id);
         self.positions.get(key).ok().flatten()
-            .and_then(|b| bincode::deserialize(&b).ok())
+            .and_then(|b| bincode::serde::decode_from_slice::<_, _>(&b, bincode::config::standard()).map(|(v, _)| v).ok())
     }
 }
 

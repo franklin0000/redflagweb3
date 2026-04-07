@@ -25,14 +25,14 @@ impl BridgeState {
 
     pub fn save_evm_event(&self, event: &EvmLockEvent) -> Result<()> {
         let key = format!("{}_{}", event.chain.chain_id(), event.evm_tx_hash);
-        self.evm_events.insert(key, bincode::serialize(event)?)?;
+        self.evm_events.insert(key, bincode::serde::encode_to_vec(event, bincode::config::standard())?)?;
         Ok(())
     }
 
     pub fn get_evm_event(&self, chain: &EvmChain, tx_hash: &str) -> Option<EvmLockEvent> {
         let key = format!("{}_{}", chain.chain_id(), tx_hash);
         self.evm_events.get(key).ok().flatten()
-            .and_then(|b| bincode::deserialize(&b).ok())
+            .and_then(|b| bincode::serde::decode_from_slice::<_, _>(&b, bincode::config::standard()).map(|(v, _)| v).ok())
     }
 
     pub fn is_evm_event_processed(&self, chain: &EvmChain, tx_hash: &str) -> bool {
@@ -44,20 +44,20 @@ impl BridgeState {
     pub fn list_evm_events(&self) -> Vec<EvmLockEvent> {
         self.evm_events.iter()
             .filter_map(|r| r.ok())
-            .filter_map(|(_, b)| bincode::deserialize(&b).ok())
+            .filter_map(|(_, b)| bincode::serde::decode_from_slice::<_, _>(&b, bincode::config::standard()).map(|(v, _)| v).ok())
             .collect()
     }
 
     // ── RF lock events ─────────────────────────────────────────────────────────
 
     pub fn save_rf_event(&self, event: &RfLockEvent) -> Result<()> {
-        self.rf_events.insert(&event.rf_tx_hash, bincode::serialize(event)?)?;
+        self.rf_events.insert(&event.rf_tx_hash, bincode::serde::encode_to_vec(event, bincode::config::standard())?)?;
         Ok(())
     }
 
     pub fn is_rf_event_processed(&self, rf_tx_hash: &str) -> bool {
         self.rf_events.get(rf_tx_hash).ok().flatten()
-            .and_then(|b| bincode::deserialize::<RfLockEvent>(&b).ok())
+            .and_then(|b| bincode::serde::decode_from_slice::<RfLockEvent, _>(&b, bincode::config::standard()).map(|(v, _)| v).ok())
             .map(|e| e.status == BridgeEventStatus::Completed)
             .unwrap_or(false)
     }
@@ -65,7 +65,7 @@ impl BridgeState {
     pub fn list_rf_events(&self) -> Vec<RfLockEvent> {
         self.rf_events.iter()
             .filter_map(|r| r.ok())
-            .filter_map(|(_, b)| bincode::deserialize(&b).ok())
+            .filter_map(|(_, b)| bincode::serde::decode_from_slice::<_, _>(&b, bincode::config::standard()).map(|(v, _)| v).ok())
             .collect()
     }
 

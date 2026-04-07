@@ -2307,7 +2307,7 @@ dependencies = [
  "futures-rustls 0.24.0",
  "libp2p-core",
  "libp2p-identity",
- "rcgen",
+ "rcgen 0.11.3",
  "ring 0.16.20",
  "rustls 0.21.12",
  "rustls-webpki 0.101.7",
@@ -2326,7 +2326,7 @@ dependencies = [
  "futures-rustls 0.26.0",
  "libp2p-core",
  "libp2p-identity",
- "rcgen",
+ "rcgen 0.11.3",
  "ring 0.17.14",
  "rustls 0.23.37",
  "rustls-webpki 0.101.7",
@@ -3159,6 +3159,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "rcgen"
+version = "0.13.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "75e669e5202259b5314d1ea5397316ad400819437857b90861765f24c4cf80a2"
+dependencies = [
+ "pem",
+ "ring 0.17.14",
+ "rustls-pki-types",
+ "time",
+ "yasna",
+]
+
+[[package]]
 name = "redflag-cli"
 version = "2.1.0"
 dependencies = [
@@ -3237,7 +3250,7 @@ dependencies = [
  "hex",
  "libp2p",
  "rayon",
- "rcgen",
+ "rcgen 0.13.2",
  "redflag-consensus",
  "redflag-core",
  "redflag-crypto",

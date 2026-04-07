@@ -1493,8 +1493,8 @@ pub async fn run_server(
             if std::env::var("TLS_SELF_SIGNED").as_deref() == Ok("1") {
                 println!("🔒 HTTPS auto-firmado (desarrollo) en https://{}", addr);
                 let cert = rcgen::generate_simple_self_signed(vec!["localhost".to_string(), "127.0.0.1".to_string()])?;
-                let cert_pem = cert.serialize_pem()?;
-                let key_pem  = cert.serialize_private_key_pem();
+                let cert_pem = cert.cert.pem();
+                let key_pem  = cert.key_pair.serialize_pem();
                 let tls_config = axum_server::tls_rustls::RustlsConfig::from_pem(
                     cert_pem.into_bytes(),
                     key_pem.into_bytes(),

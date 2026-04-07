@@ -441,3 +441,168 @@ impl DexState {
             .and_then(|b| bincode::deserialize(&b).ok())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn make_dex() -> DexState {
+        let db = sled::Config::new().temporary(true).open().unwrap();
+        DexState::new(
+            db.open_tree("pools").unwrap(),
+            db.open_tree("pos").unwrap(),
+            db.open_tree("swaps").unwrap(),
+            db.open_tree("prices").unwrap(),
+        )
+    }
+
+    fn seeded_pool(dex: &DexState) {
+        dex.create_pool("wETH", 1).unwrap();
+        dex.add_liquidity("RF_wETH", "lp_provider", 1_000_000, 500_000, 1).unwrap();
+    }
+
+    // ── Pool creation ─────────────────────────────────────────────────────────
+
+    #[test]
+    fn test_create_pool_once() {
+        let dex = make_dex();
+        dex.create_pool("wETH", 1).unwrap();
+        let result = dex.create_pool("wETH", 2);
+        assert!(result.is_err(), "No se puede crear el mismo pool dos veces");
+    }
+
+    // ── Add liquidity ─────────────────────────────────────────────────────────
+
+    #[test]
+    fn test_add_liquidity_below_minimum() {
+        let dex = make_dex();
+        dex.create_pool("wETH", 1).unwrap();
+        // MIN_LIQUIDITY = 1_000; amounts below threshold must be rejected
+        let result = dex.add_liquidity("RF_wETH", "alice", 100, 100, 1);
+        assert!(result.is_err(), "Liquidez por debajo del mínimo debe ser rechazada");
+    }
+
+    #[test]
+    fn test_add_liquidity_increases_reserves() {
+        let dex = make_dex();
+        seeded_pool(&dex);
+        let pool = dex.get_pool("RF_wETH").unwrap();
+        assert_eq!(pool.reserve_rf, 1_000_000);
+        assert_eq!(pool.reserve_b, 500_000);
+        assert!(pool.total_lp > 0);
+    }
+
+    // ── AMM invariant k ───────────────────────────────────────────────────────
+
+    #[test]
+    fn test_invariant_k_preserved_rf_to_b() {
+        let dex = make_dex();
+        seeded_pool(&dex);
+        let pool_before = dex.get_pool("RF_wETH").unwrap();
+        let k_before = pool_before.reserve_rf as u128 * pool_before.reserve_b as u128;
+
+        dex.execute_swap_rf_to_b("RF_wETH", "trader", 10_000, 0, "hash1", 2).unwrap();
+
+        let pool_after = dex.get_pool("RF_wETH").unwrap();
+        let k_after = pool_after.reserve_rf as u128 * pool_after.reserve_b as u128;
+        // k_after >= k_before (fee makes k slightly bigger, never smaller)
+        assert!(k_after >= k_before, "Invariante k debe mantenerse: antes={} después={}", k_before, k_after);
+    }
+
+    #[test]
+    fn test_invariant_k_preserved_b_to_rf() {
+        let dex = make_dex();
+        seeded_pool(&dex);
+        let pool_before = dex.get_pool("RF_wETH").unwrap();
+        let k_before = pool_before.reserve_rf as u128 * pool_before.reserve_b as u128;
+
+        dex.execute_swap_b_to_rf("RF_wETH", "trader", 5_000, 0, "hash2", 2).unwrap();
+
+        let pool_after = dex.get_pool("RF_wETH").unwrap();
+        let k_after = pool_after.reserve_rf as u128 * pool_after.reserve_b as u128;
+        assert!(k_after >= k_before, "Invariante k debe mantenerse en swap B→RF");
+    }
+
+    // ── Slippage protection ───────────────────────────────────────────────────
+
+    #[test]
+    fn test_slippage_protection_rf_to_b() {
+        let dex = make_dex();
+        seeded_pool(&dex);
+        // Request min_amount_out higher than what the pool can give
+        let result = dex.execute_swap_rf_to_b("RF_wETH", "trader", 10_000, 999_999_999, "hash3", 2);
+        assert!(result.is_err(), "Slippage excesivo debe ser rechazado");
+        assert!(result.unwrap_err().to_string().contains("Slippage"));
+    }
+
+    #[test]
+    fn test_slippage_protection_b_to_rf() {
+        let dex = make_dex();
+        seeded_pool(&dex);
+        let result = dex.execute_swap_b_to_rf("RF_wETH", "trader", 5_000, 999_999_999, "hash4", 2);
+        assert!(result.is_err(), "Slippage excesivo debe ser rechazado");
+    }
+
+    // ── Zero-amount rejection ─────────────────────────────────────────────────
+
+    #[test]
+    fn test_zero_amount_swap_rejected() {
+        let dex = make_dex();
+        seeded_pool(&dex);
+        assert!(dex.execute_swap_rf_to_b("RF_wETH", "trader", 0, 0, "hash5", 2).is_err());
+        assert!(dex.execute_swap_b_to_rf("RF_wETH", "trader", 0, 0, "hash6", 2).is_err());
+    }
+
+    // ── Empty pool protection ─────────────────────────────────────────────────
+
+    #[test]
+    fn test_swap_empty_pool_rejected() {
+        let dex = make_dex();
+        dex.create_pool("wBNB", 1).unwrap();
+        // Pool has no liquidity
+        assert!(dex.execute_swap_rf_to_b("RF_wBNB", "trader", 1000, 0, "hash7", 2).is_err());
+    }
+
+    // ── Remove liquidity ──────────────────────────────────────────────────────
+
+    #[test]
+    fn test_remove_liquidity_excess_rejected() {
+        let dex = make_dex();
+        seeded_pool(&dex);
+        let pos = dex.get_lp_position("lp_provider", "RF_wETH").unwrap();
+        // Try to remove more LP tokens than held
+        let result = dex.remove_liquidity("RF_wETH", "lp_provider", pos.lp_tokens + 1, 2);
+        assert!(result.is_err(), "No se puede retirar más LP tokens de los que se poseen");
+    }
+
+    #[test]
+    fn test_remove_liquidity_from_empty_position() {
+        let dex = make_dex();
+        seeded_pool(&dex);
+        let result = dex.remove_liquidity("RF_wETH", "stranger", 100, 2);
+        assert!(result.is_err(), "No se puede retirar liquidez sin posición");
+    }
+
+    // ── Calc functions ────────────────────────────────────────────────────────
+
+    #[test]
+    fn test_calc_swap_output_nonzero() {
+        let pool = LiquidityPool {
+            pool_id: "RF_wETH".into(),
+            token_b: "wETH".into(),
+            reserve_rf: 1_000_000,
+            reserve_b: 500_000,
+            total_lp: 100,
+            price_rf_in_b: 500_000,
+            volume_rf: 0,
+            fees_collected: 0,
+            created_at: 0,
+            updated_at: 0,
+        };
+        let (out, fee) = pool.calc_swap_rf_to_b(10_000);
+        assert!(out > 0, "Swap output debe ser > 0");
+        assert!(fee > 0, "Fee debe ser > 0");
+        // Output must be less than reserve_b
+        assert!(out < pool.reserve_b);
+    }
+}

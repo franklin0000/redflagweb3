@@ -3265,6 +3265,7 @@ dependencies = [
  "log",
  "rayon",
  "redflag-core",
+ "redflag-crypto",
  "redflag-vm",
  "serde",
  "sled",

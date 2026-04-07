@@ -311,3 +311,278 @@ pub struct StateStats {
     pub tx_count: usize,
     pub fee_pool_balance: u64,
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use redflag_core::{Transaction, CHAIN_ID, GENESIS_ADDRESS, MIN_FEE};
+    use redflag_crypto::SigningKeyPair;
+
+    fn make_state() -> StateDB {
+        let tmp = format!("/tmp/rf_test_state_{}", std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_nanos());
+        StateDB::new(&tmp).expect("StateDB::new failed in test")
+    }
+
+    /// Genera un par de llaves ML-DSA y devuelve (hex_pubkey, keypair)
+    fn gen_account() -> (String, SigningKeyPair) {
+        let kp = SigningKeyPair::generate().unwrap();
+        let pubkey_hex = hex::encode(kp.public_key());
+        (pubkey_hex, kp)
+    }
+
+    /// Crea y firma una Transaction normal (no-genesis)
+    fn signed_tx(
+        keypair: &SigningKeyPair,
+        sender_hex: &str,
+        receiver_hex: &str,
+        amount: u64,
+        fee: u64,
+        nonce: u64,
+    ) -> Transaction {
+        let mut tx = Transaction {
+            sender:    sender_hex.to_string(),
+            receiver:  receiver_hex.to_string(),
+            amount,
+            fee,
+            nonce,
+            chain_id: CHAIN_ID,
+            read_set:  vec![sender_hex.to_string(), receiver_hex.to_string()],
+            write_set: vec![sender_hex.to_string(), receiver_hex.to_string()],
+            data: vec![],
+            signature: vec![],
+            timestamp: 0,
+        };
+        let msg = bincode::serialize(&tx).unwrap();
+        tx.signature = keypair.sign(&msg).unwrap();
+        tx
+    }
+
+    // ── Signature verification ─────────────────────────────────────────────
+
+    #[test]
+    fn test_valid_signature_accepted() {
+        let state = make_state();
+        let (alice_hex, alice_kp) = gen_account();
+        // Fund alice from genesis
+        let fund = Transaction::genesis(alice_hex.clone(), 1_000_000);
+        state.apply_transactions(&[fund]).unwrap();
+
+        let (bob_hex, _) = gen_account();
+        let tx = signed_tx(&alice_kp, &alice_hex, &bob_hex, 100, MIN_FEE, 0);
+        assert!(state.apply_transactions(&[tx]).is_ok());
+        assert_eq!(state.get_balance(&bob_hex), 100);
+    }
+
+    #[test]
+    fn test_invalid_signature_rejected() {
+        let state = make_state();
+        let (alice_hex, _alice_kp) = gen_account();
+        let fund = Transaction::genesis(alice_hex.clone(), 1_000_000);
+        state.apply_transactions(&[fund]).unwrap();
+
+        let (bob_hex, _) = gen_account();
+        // Use a different keypair to sign — should be rejected
+        let (_eve_hex, eve_kp) = gen_account();
+        let tx = signed_tx(&eve_kp, &alice_hex, &bob_hex, 100, MIN_FEE, 0);
+        // apply_transactions swallows errors internally; check balance unchanged
+        state.apply_transactions(&[tx]).unwrap();
+        assert_eq!(state.get_balance(&bob_hex), 0, "TX con firma inválida no debe mover fondos");
+    }
+
+    #[test]
+    fn test_empty_signature_rejected() {
+        let state = make_state();
+        let (alice_hex, _) = gen_account();
+        let fund = Transaction::genesis(alice_hex.clone(), 1_000_000);
+        state.apply_transactions(&[fund]).unwrap();
+
+        let (bob_hex, _) = gen_account();
+        let mut tx = Transaction {
+            sender: alice_hex.clone(), receiver: bob_hex.clone(),
+            amount: 100, fee: MIN_FEE, nonce: 0, chain_id: CHAIN_ID,
+            read_set: vec![], write_set: vec![], data: vec![],
+            signature: vec![],   // empty — must fail
+            timestamp: 0,
+        };
+        tx.signature = vec![];
+        state.apply_transactions(&[tx]).unwrap();
+        assert_eq!(state.get_balance(&bob_hex), 0, "Firma vacía no debe ser aceptada");
+    }
+
+    // ── Replay / nonce protection ──────────────────────────────────────────
+
+    #[test]
+    fn test_replay_attack_rejected() {
+        let state = make_state();
+        let (alice_hex, alice_kp) = gen_account();
+        let fund = Transaction::genesis(alice_hex.clone(), 1_000_000);
+        state.apply_transactions(&[fund]).unwrap();
+
+        let (bob_hex, _) = gen_account();
+        let tx = signed_tx(&alice_kp, &alice_hex, &bob_hex, 100, MIN_FEE, 0);
+
+        state.apply_transactions(&[tx.clone()]).unwrap();
+        let balance_after_first = state.get_balance(&bob_hex);
+
+        // Replay the exact same TX (nonce 0 again)
+        state.apply_transactions(&[tx]).unwrap();
+        assert_eq!(state.get_balance(&bob_hex), balance_after_first,
+            "TX repetida con mismo nonce debe ser rechazada (replay protection)");
+    }
+
+    #[test]
+    fn test_nonce_out_of_order_rejected() {
+        let state = make_state();
+        let (alice_hex, alice_kp) = gen_account();
+        let fund = Transaction::genesis(alice_hex.clone(), 1_000_000);
+        state.apply_transactions(&[fund]).unwrap();
+
+        let (bob_hex, _) = gen_account();
+        // nonce=5 when account nonce is 0 → rejected
+        let tx = signed_tx(&alice_kp, &alice_hex, &bob_hex, 100, MIN_FEE, 5);
+        state.apply_transactions(&[tx]).unwrap();
+        assert_eq!(state.get_balance(&bob_hex), 0, "Nonce incorrecto debe ser rechazado");
+    }
+
+    // ── Double-spend / balance check ───────────────────────────────────────
+
+    #[test]
+    fn test_double_spend_rejected() {
+        let state = make_state();
+        let (alice_hex, alice_kp) = gen_account();
+        let fund = Transaction::genesis(alice_hex.clone(), 500);
+        state.apply_transactions(&[fund]).unwrap();
+
+        let (bob_hex, _) = gen_account();
+        // Alice only has 500; try to send 600 (+ fee)
+        let tx = signed_tx(&alice_kp, &alice_hex, &bob_hex, 600, MIN_FEE, 0);
+        state.apply_transactions(&[tx]).unwrap();
+        assert_eq!(state.get_balance(&bob_hex), 0, "Gasto doble debe ser rechazado por saldo insuficiente");
+        assert_eq!(state.get_balance(&alice_hex), 500, "Alice no debe perder fondos en TX inválida");
+    }
+
+    // ── Fee validation ─────────────────────────────────────────────────────
+
+    #[test]
+    fn test_fee_below_minimum_rejected() {
+        let state = make_state();
+        let (alice_hex, alice_kp) = gen_account();
+        let fund = Transaction::genesis(alice_hex.clone(), 1_000_000);
+        state.apply_transactions(&[fund]).unwrap();
+
+        let (bob_hex, _) = gen_account();
+        // fee=0 < MIN_FEE=1
+        let tx = signed_tx(&alice_kp, &alice_hex, &bob_hex, 100, 0, 0);
+        state.apply_transactions(&[tx]).unwrap();
+        assert_eq!(state.get_balance(&bob_hex), 0, "Fee < MIN_FEE debe ser rechazado");
+    }
+
+    // ── Sender == receiver ─────────────────────────────────────────────────
+
+    #[test]
+    fn test_self_transfer_rejected() {
+        let state = make_state();
+        let (alice_hex, alice_kp) = gen_account();
+        let fund = Transaction::genesis(alice_hex.clone(), 1_000_000);
+        state.apply_transactions(&[fund]).unwrap();
+
+        let tx = signed_tx(&alice_kp, &alice_hex, &alice_hex, 100, MIN_FEE, 0);
+        state.apply_transactions(&[tx]).unwrap();
+        // Balance stays unchanged (no net movement on a valid self-tx would round-trip,
+        // but the rule is rejected outright)
+        assert_eq!(state.get_balance(&alice_hex), 1_000_000,
+            "Transferencia a sí mismo debe ser rechazada");
+    }
+
+    // ── Wrong chain_id ─────────────────────────────────────────────────────
+
+    #[test]
+    fn test_wrong_chain_id_rejected() {
+        let state = make_state();
+        let (alice_hex, alice_kp) = gen_account();
+        let fund = Transaction::genesis(alice_hex.clone(), 1_000_000);
+        state.apply_transactions(&[fund]).unwrap();
+
+        let (bob_hex, _) = gen_account();
+        let mut tx = signed_tx(&alice_kp, &alice_hex, &bob_hex, 100, MIN_FEE, 0);
+        tx.chain_id = 9999; // wrong chain
+        let msg = bincode::serialize(&tx).unwrap();
+        tx.signature = alice_kp.sign(&msg).unwrap();
+
+        state.apply_transactions(&[tx]).unwrap();
+        assert_eq!(state.get_balance(&bob_hex), 0, "chain_id incorrecto debe ser rechazado");
+    }
+
+    // ── Fee pool accumulation ──────────────────────────────────────────────
+
+    #[test]
+    fn test_fee_goes_to_pool() {
+        let state = make_state();
+        let (alice_hex, alice_kp) = gen_account();
+        let fund = Transaction::genesis(alice_hex.clone(), 1_000_000);
+        state.apply_transactions(&[fund]).unwrap();
+
+        let fee_before = state.get_balance(redflag_core::FEE_POOL_ADDRESS);
+        let (bob_hex, _) = gen_account();
+        let fee = 10;
+        let tx = signed_tx(&alice_kp, &alice_hex, &bob_hex, 100, fee, 0);
+        state.apply_transactions(&[tx]).unwrap();
+
+        assert_eq!(state.get_balance(redflag_core::FEE_POOL_ADDRESS), fee_before + fee,
+            "Fee debe acumularse en FEE_POOL_ADDRESS");
+    }
+
+    // ── Staking ────────────────────────────────────────────────────────────
+
+    #[test]
+    fn test_staking_registers_validator() {
+        let state = make_state();
+        let (alice_hex, alice_kp) = gen_account();
+        let fund = Transaction::genesis(alice_hex.clone(), 1_000_000_000_000); // 1T RF
+        state.apply_transactions(&[fund]).unwrap();
+
+        let stake_amount = redflag_core::MIN_STAKE;
+        let tx = signed_tx(&alice_kp, &alice_hex, redflag_core::STAKE_ADDRESS, stake_amount, MIN_FEE, 0);
+        state.apply_transactions(&[tx]).unwrap();
+
+        let stakes = state.get_stakes();
+        let alice_stake = stakes.iter().find(|(addr, _)| addr == &alice_hex);
+        assert!(alice_stake.is_some(), "Alice debe aparecer en la lista de stakers");
+        assert_eq!(alice_stake.unwrap().1, stake_amount);
+    }
+
+    // ── Genesis is idempotent ──────────────────────────────────────────────
+
+    #[test]
+    fn test_genesis_not_duplicated() {
+        // Opening same path twice should not double the genesis balance
+        let path = format!("/tmp/rf_genesis_test_{}", std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_nanos());
+        let state1 = StateDB::new(&path).unwrap();
+        let bal1 = state1.get_balance(GENESIS_ADDRESS);
+        drop(state1);
+        let state2 = StateDB::new(&path).unwrap();
+        let bal2 = state2.get_balance(GENESIS_ADDRESS);
+        assert_eq!(bal1, bal2, "Genesis no debe duplicarse al abrir la DB dos veces");
+    }
+
+    // ── Stats counter ──────────────────────────────────────────────────────
+
+    #[test]
+    fn test_tx_counter_increments() {
+        let state = make_state();
+        let (alice_hex, alice_kp) = gen_account();
+        let fund = Transaction::genesis(alice_hex.clone(), 1_000_000);
+        state.apply_transactions(&[fund]).unwrap();
+
+        let stats_before = state.stats();
+        let (bob_hex, _) = gen_account();
+        let tx = signed_tx(&alice_kp, &alice_hex, &bob_hex, 100, MIN_FEE, 0);
+        state.apply_transactions(&[tx]).unwrap();
+        let stats_after = state.stats();
+
+        assert!(stats_after.tx_count > stats_before.tx_count,
+            "El contador de TXs debe incrementar después de cada TX válida");
+    }
+}

@@ -119,3 +119,110 @@ impl TokenLedger {
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn make_ledger() -> TokenLedger {
+        let db = sled::Config::new().temporary(true).open().unwrap();
+        let tree = db.open_tree("test_balances").unwrap();
+        TokenLedger::new(tree)
+    }
+
+    // ── Supply cap ────────────────────────────────────────────────────────────
+
+    #[test]
+    fn test_supply_cap_enforced() {
+        let ledger = make_ledger();
+        // Credit up to the cap
+        ledger.set_balance("alice", "wETH", TokenLedger::MAX_TOKEN_SUPPLY - 1).unwrap();
+        // Adding 2 more should exceed the cap
+        let result = ledger.credit("alice", "wETH", 2);
+        assert!(result.is_err(), "Debe rechazar balance por encima del supply máximo");
+        let msg = result.unwrap_err().to_string();
+        assert!(msg.contains("supply máximo"), "Error debe mencionar supply máximo");
+    }
+
+    #[test]
+    fn test_supply_cap_exact_boundary() {
+        let ledger = make_ledger();
+        ledger.set_balance("alice", "wETH", TokenLedger::MAX_TOKEN_SUPPLY - 100).unwrap();
+        // Exactly reaching the cap is allowed
+        assert!(ledger.credit("alice", "wETH", 100).is_ok());
+        // One more unit must fail
+        assert!(ledger.credit("alice", "wETH", 1).is_err());
+    }
+
+    // ── Overflow protection ───────────────────────────────────────────────────
+
+    #[test]
+    fn test_credit_overflow_protection() {
+        let ledger = make_ledger();
+        ledger.set_balance("bob", "wBNB", u64::MAX - 10).unwrap();
+        let result = ledger.credit("bob", "wBNB", 100);
+        assert!(result.is_err(), "checked_add debe detectar overflow aritmético");
+    }
+
+    #[test]
+    fn test_credit_zero_rejected() {
+        let ledger = make_ledger();
+        assert!(ledger.credit("alice", "wETH", 0).is_err(), "credit(0) debe ser rechazado");
+    }
+
+    // ── Debit: insufficient balance ────────────────────────────────────────────
+
+    #[test]
+    fn test_debit_insufficient_balance() {
+        let ledger = make_ledger();
+        ledger.set_balance("alice", "wMATIC", 500).unwrap();
+        let result = ledger.debit("alice", "wMATIC", 501);
+        assert!(result.is_err(), "Debe rechazar debit que excede el balance");
+        assert_eq!(ledger.get_balance("alice", "wMATIC"), 500, "Balance no debe cambiar");
+    }
+
+    #[test]
+    fn test_debit_exact_balance() {
+        let ledger = make_ledger();
+        ledger.set_balance("alice", "wUSDC", 1000).unwrap();
+        assert!(ledger.debit("alice", "wUSDC", 1000).is_ok());
+        assert_eq!(ledger.get_balance("alice", "wUSDC"), 0);
+    }
+
+    // ── Mint / Burn ────────────────────────────────────────────────────────────
+
+    #[test]
+    fn test_mint_too_small_rejected() {
+        let ledger = make_ledger();
+        // amount_wei < 1e12 → amount_units == 0 → rejected
+        let result = ledger.mint_from_bridge("alice", "wETH", 999_999_999_999);
+        assert!(result.is_err(), "Montos demasiado pequeños deben ser rechazados");
+    }
+
+    #[test]
+    fn test_mint_burn_roundtrip() {
+        let ledger = make_ledger();
+        let wei = 2_000_000_000_000u64; // 2e12 → 2 units
+        let units = ledger.mint_from_bridge("alice", "wETH", wei).unwrap();
+        assert_eq!(units, 2);
+        assert_eq!(ledger.get_balance("alice", "wETH"), 2);
+        let back_wei = ledger.burn_for_bridge("alice", "wETH", 2).unwrap();
+        assert_eq!(back_wei, 2_000_000_000_000);
+        assert_eq!(ledger.get_balance("alice", "wETH"), 0);
+    }
+
+    // ── Isolation: different tokens, different slots ──────────────────────────
+
+    #[test]
+    fn test_token_isolation() {
+        let ledger = make_ledger();
+        ledger.set_balance("alice", "wETH", 1000).unwrap();
+        ledger.set_balance("alice", "wBNB", 500).unwrap();
+        assert_eq!(ledger.get_balance("alice", "wETH"), 1000);
+        assert_eq!(ledger.get_balance("alice", "wBNB"), 500);
+        // Debiting wBNB must not touch wETH
+        ledger.debit("alice", "wBNB", 200).unwrap();
+        assert_eq!(ledger.get_balance("alice", "wETH"), 1000);
+        assert_eq!(ledger.get_balance("alice", "wBNB"), 300);
+    }
+}

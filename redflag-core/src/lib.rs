@@ -16,6 +16,12 @@ pub const GENESIS_BALANCE: u64 = 1_000_000_000;
 /// Fee mínimo por transacción (protección anti-spam)
 pub const MIN_FEE: u64 = 1;
 
+/// Dirección de staking — enviar RF aquí para registrarse como validador
+pub const STAKE_ADDRESS: &str = "RedFlag_Protocol_Stake_v1";
+
+/// Stake mínimo para ser validador (10,000 RF)
+pub const MIN_STAKE: u64 = 10_000_000_000;
+
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 pub struct Transaction {
     pub sender: String,

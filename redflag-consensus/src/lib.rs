@@ -1,7 +1,7 @@
 use serde::{Serialize, Deserialize};
 use redflag_crypto::SigningKeyPair;
 use redflag_core::{Transaction, EncryptedTransaction};
-use redflag_state::StateDB;
+use redflag_state::{StateDB, Account};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use dashmap::{DashMap, DashSet};
@@ -353,6 +353,21 @@ impl ConsensusEngine {
                 
                 if let Err(e) = self.state.apply_transactions(&all_txs) {
                     eprintln!("❌ Error aplicando transacciones: {}", e);
+                }
+
+                // ── Recompensa al autor del vértice ───────────────────────────
+                // 1 RF base + 0.1 RF por TX incluida
+                let reward: u64 = 1_000_000 + (all_txs.len() as u64 * 100_000);
+                let author_hex = hex::encode(&v.author);
+                if let Some(mut acc) = self.state.get_account(&author_hex) {
+                    acc.balance = acc.balance.saturating_add(reward);
+                    let _ = self.state.save_account_pub(&acc);
+                } else {
+                    let _ = self.state.save_account_pub(&redflag_state::Account {
+                        address: author_hex.clone(),
+                        balance: reward,
+                        nonce: 0,
+                    });
                 }
 
                 // Limpiar mempool de TXs ya confirmadas

@@ -185,6 +185,8 @@ pub fn create_router(state: ApiState) -> Router {
         // Validadores
         .route("/validators",             get(get_validators))
         .route("/validators/apply",       post(validator_apply))
+        .route("/staking/info",           get(staking_info))
+        .route("/staking/stakes",         get(get_stakes))
         // WebSocket tiempo real
         .route("/ws",               get(ws_handler))
         // Métricas Prometheus
@@ -1352,6 +1354,39 @@ async fn market_assets() -> Json<serde_json::Value> {
             "taker_fee":     "0.3",
         },
     }))
+}
+
+// ── Staking ──────────────────────────────────────────────────────────────────
+
+async fn staking_info() -> Json<serde_json::Value> {
+    Json(serde_json::json!({
+        "stake_address":  redflag_core::STAKE_ADDRESS,
+        "min_stake_rf":   redflag_core::MIN_STAKE,
+        "reward_per_vertex": "1 RF base + 0.1 RF por TX incluida",
+        "round_interval_ms": 200,
+        "how_to_stake": {
+            "step1": "Instala el nodo: curl -sSf https://redflagweb3-app.onrender.com/install.sh | bash",
+            "step2": "Consigue la direccion de tu nodo en el dashboard",
+            "step3": "Envia RF a la direccion STAKE_ADDRESS desde tu wallet de nodo",
+            "step4": "El nodo se registra automaticamente como validador",
+            "step5": "Empiezas a recibir recompensas por cada vertice que produces",
+        },
+        "economics": {
+            "block_reward": "1,000,000 microRF (1 RF) por vertice",
+            "tx_reward":    "100,000 microRF (0.1 RF) por TX incluida",
+            "min_stake":    "10,000 RF para ser validador",
+        }
+    }))
+}
+
+async fn get_stakes(State(state): State<ApiState>) -> Json<serde_json::Value> {
+    let mut raw = state.consensus.state.get_stakes();
+    raw.sort_by(|a, b| b.1.cmp(&a.1));
+    let total: u64 = raw.iter().map(|(_, a)| a).sum();
+    let stakes: Vec<serde_json::Value> = raw.into_iter()
+        .map(|(addr, amount)| serde_json::json!({ "address": addr, "staked_rf": amount }))
+        .collect();
+    Json(serde_json::json!({ "stakes": stakes, "total_staked": total, "validator_count": stakes.len() }))
 }
 
 // ── Reqwest para proxy bridge ─────────────────────────────────────────────────

@@ -192,6 +192,19 @@ impl StateDB {
         self.save_account(&sender)?;
         self.save_account(&receiver)?;
 
+        // ── Staking: si envías RF a STAKE_ADDRESS te registras como validador ──
+        if tx.receiver == redflag_core::STAKE_ADDRESS && tx.amount >= redflag_core::MIN_STAKE {
+            // Guardar stake en árbol separado: sender → amount staked
+            let stake_tree = self.db.open_tree("stakes").unwrap_or_else(|_| self.db.open_tree("stakes").unwrap());
+            let prev_stake = stake_tree.get(&tx.sender).ok().flatten()
+                .and_then(|b| b.as_ref().try_into().ok().map(u64::from_be_bytes))
+                .unwrap_or(0);
+            let new_stake = prev_stake + tx.amount;
+            let _ = stake_tree.insert(tx.sender.as_bytes(), &new_stake.to_be_bytes());
+            println!("🗳️  Stake: {} RF stakeados por {}… (total: {} RF)",
+                tx.amount, &tx.sender[..12.min(tx.sender.len())], new_stake);
+        }
+
         // Smart contracts
         if let Some(vm) = &self.vm {
             if tx.receiver == "DEPLOY" && !tx.data.is_empty() {
@@ -237,6 +250,22 @@ impl StateDB {
     /// Public version for DEX/bridge balance updates
     pub fn save_account_pub(&self, account: &Account) -> Result<(), anyhow::Error> {
         self.save_account(account)
+    }
+
+    /// Lista de stakers: (address, amount_staked)
+    pub fn get_stakes(&self) -> Vec<(String, u64)> {
+        let tree = match self.db.open_tree("stakes") {
+            Ok(t) => t,
+            Err(_) => return vec![],
+        };
+        tree.iter()
+            .flatten()
+            .map(|(k, v)| {
+                let addr = String::from_utf8_lossy(&k).to_string();
+                let amount = v.as_ref().try_into().ok().map(u64::from_be_bytes).unwrap_or(0);
+                (addr, amount)
+            })
+            .collect()
     }
 
     pub fn stats(&self) -> StateStats {

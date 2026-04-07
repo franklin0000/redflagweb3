@@ -159,15 +159,27 @@ impl Mempool {
     }
 
     pub fn create_vertex(&self, round: Round, parents: HashSet<VertexId>) -> Result<Vertex, redflag_crypto::CryptoError> {
+        const MAX_TXS_PER_VERTEX: usize = 500;
         let txs: Vec<Transaction> = self.pending_transactions
             .iter()
+            .take(MAX_TXS_PER_VERTEX)
             .map(|kv| kv.value().clone())
             .collect();
-            
+        // Limpiar las TXs que ya se incluyeron
+        for tx in &txs {
+            let id = blake3::hash(&bincode::serialize(tx).unwrap_or_default());
+            self.pending_transactions.remove(id.as_bytes());
+        }
+
         let etxs: Vec<EncryptedTransaction> = self.pending_encrypted_transactions
             .iter()
+            .take(MAX_TXS_PER_VERTEX)
             .map(|kv| kv.value().clone())
             .collect();
+        for etx in &etxs {
+            let id = blake3::hash(&bincode::serialize(etx).unwrap_or_default());
+            self.pending_encrypted_transactions.remove(id.as_bytes());
+        }
 
         let author = self.keypair.public_key().to_vec();
 

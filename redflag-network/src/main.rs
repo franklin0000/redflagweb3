@@ -151,7 +151,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
         &faucet_address[..16]);
 
     // ── 9. Loop principal ────────────────────────────────────────────────────
-    let mut round_interval = time::interval(Duration::from_secs(5));
+    let mut round_interval = time::interval(Duration::from_millis(500));
     let mut stats_interval = time::interval(Duration::from_secs(30));
 
     loop {

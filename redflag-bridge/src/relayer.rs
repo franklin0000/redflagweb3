@@ -1,4 +1,6 @@
+use std::collections::HashMap;
 use std::sync::Arc;
+use std::time::Instant;
 use tokio::time::{self, Duration};
 use anyhow::Result;
 use crate::{
@@ -25,12 +27,45 @@ impl Default for RelayerConfig {
             bridge_private_key: std::env::var("BRIDGE_RF_PRIVATE_KEY").unwrap_or_default(),
             bridge_data_dir:    std::env::var("BRIDGE_DATA_DIR").unwrap_or_else(|_| "./bridge_data".to_string()),
             poll_interval_secs: std::env::var("BRIDGE_POLL_SECS").ok()
-                .and_then(|s| s.parse().ok()).unwrap_or(12),
+                .and_then(|s| s.parse().ok()).unwrap_or(60),  // 60s default — safe for public RPCs (~1 req/min)
             confirmations:      std::env::var("BRIDGE_CONFIRMATIONS").ok()
                 .and_then(|s| s.parse().ok()).unwrap_or(3),
             max_amount_per_tx:  std::env::var("BRIDGE_MAX_AMOUNT").ok()
                 .and_then(|s| s.parse().ok()).unwrap_or(1_000_000),
         }
+    }
+}
+
+/// Backoff state per EVM chain
+struct ChainBackoff {
+    consecutive_errors: u32,
+    blocked_until:      Option<Instant>,
+}
+
+impl ChainBackoff {
+    fn new() -> Self { Self { consecutive_errors: 0, blocked_until: None } }
+
+    /// Returns true if this chain is currently in backoff
+    fn is_blocked(&self) -> bool {
+        self.blocked_until.map(|t| Instant::now() < t).unwrap_or(false)
+    }
+
+    /// Call when a chain scan succeeds — reset backoff
+    fn on_success(&mut self) {
+        self.consecutive_errors = 0;
+        self.blocked_until = None;
+    }
+
+    /// Call when a chain scan fails — schedule exponential backoff
+    /// Delays: 30s → 60s → 120s → 240s → 300s (cap)
+    fn on_error(&mut self, chain_name: &str, err: &anyhow::Error) {
+        self.consecutive_errors += 1;
+        let wait_secs = (30u64 << (self.consecutive_errors - 1).min(4)).min(300);
+        self.blocked_until = Some(Instant::now() + Duration::from_secs(wait_secs));
+        tracing::warn!(
+            "⏳ {} error #{} — backoff {}s: {}",
+            chain_name, self.consecutive_errors, wait_secs, err
+        );
     }
 }
 
@@ -69,17 +104,35 @@ impl Relayer {
     pub async fn run(self: Arc<Self>) {
         println!("🌉 Bridge relayer iniciado — {} cadenas EVM activas", self.evm_chains.len());
         println!("   RedFlag node: {}", self.config.rf_node_url);
+        println!("   Poll interval: {}s", self.config.poll_interval_secs);
 
         let mut poll = time::interval(Duration::from_secs(self.config.poll_interval_secs));
         let mut rf_scan_ts: u64 = 0;
+
+        // Per-chain backoff state
+        let mut backoff: HashMap<String, ChainBackoff> = HashMap::new();
 
         loop {
             poll.tick().await;
 
             // 1. Escanear eventos EVM → mintear en RF
             for connector in &self.evm_chains {
-                if let Err(e) = self.process_evm_to_rf(connector, &mut rf_scan_ts).await {
-                    tracing::error!("EVM→RF error ({}): {}", connector.chain.name(), e);
+                let key = connector.chain.name().to_string();
+                let cb = backoff.entry(key.clone()).or_insert_with(ChainBackoff::new);
+
+                if cb.is_blocked() {
+                    tracing::debug!("⏸  {} en backoff, saltando este ciclo", connector.chain.name());
+                    continue;
+                }
+
+                match self.process_evm_to_rf(connector, &mut rf_scan_ts).await {
+                    Ok(()) => {
+                        backoff.get_mut(&key).unwrap().on_success();
+                    }
+                    Err(e) => {
+                        let cb = backoff.get_mut(&key).unwrap();
+                        cb.on_error(connector.chain.name(), &e);
+                    }
                 }
             }
 
@@ -105,7 +158,8 @@ impl Relayer {
 
         if from_block >= to_block { return Ok(()); }
 
-        let events = connector.scan_lock_events(from_block, to_block).await;
+        // Now propagates error so the caller can apply backoff
+        let events = connector.scan_lock_events(from_block, to_block).await?;
 
         for mut event in events {
             let key = event.evm_tx_hash.clone();

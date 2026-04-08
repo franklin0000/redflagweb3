@@ -3,7 +3,7 @@ use std::str::FromStr;
 use anyhow::{Context, Result};
 use ethers::{
     prelude::*,
-    providers::{Provider, Ws, Http},
+    providers::{Provider, Http},
     types::{Address, U256, H256, Filter, Log},
 };
 use crate::types::{EvmChain, EvmLockEvent, BridgeEventStatus};
@@ -60,10 +60,11 @@ impl EvmConnector {
     }
 
     /// Escanea eventos Locked desde `from_block` hasta `to_block`
-    pub async fn scan_lock_events(&self, from_block: u64, to_block: u64) -> Vec<EvmLockEvent> {
+    /// Retorna error en lugar de swallowing para que el relayer pueda aplicar backoff
+    pub async fn scan_lock_events(&self, from_block: u64, to_block: u64) -> Result<Vec<EvmLockEvent>> {
         let contract_addr = match self.contract_address {
             Some(a) => a,
-            None => return vec![],
+            None => return Ok(vec![]),
         };
 
         // topic0 = keccak256("Locked(address,string,uint256,uint64)")
@@ -77,19 +78,13 @@ impl EvmConnector {
             .from_block(from_block)
             .to_block(to_block);
 
-        let logs: Vec<Log> = match self.provider.get_logs(&filter).await {
-            Ok(l) => l,
-            Err(e) => {
-                tracing::error!("Error obteniendo logs de {}: {}", self.chain.name(), e);
-                return vec![];
-            }
-        };
+        let logs: Vec<Log> = self.provider.get_logs(&filter).await
+            .with_context(|| format!("get_logs falló en {}", self.chain.name()))?;
 
         let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_secs();
         let mut events = Vec::new();
 
         for log in logs {
-            // Decodificar manualmente el log
             // topics[1] = from address (indexed)
             // data = abi.encode(rfAddress, amount, nonce)
             if log.topics.len() < 2 { continue; }
@@ -133,7 +128,7 @@ impl EvmConnector {
             }
         }
 
-        events
+        Ok(events)
     }
 
     /// Ejecuta `unlock(to, amount, nonce)` en el contrato EVM (liberar tokens del lock)

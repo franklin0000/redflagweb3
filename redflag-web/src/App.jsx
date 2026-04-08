@@ -84,7 +84,7 @@ function LockScreen({onUnlock}) {
     <div className="lock-sc">
       <div className="card lock-card fi">
         <div style={{textAlign:'center',marginBottom:32}}>
-          <ShieldCheck size={52} color="var(--red)" style={{margin:'0 auto 14px'}}/>
+          <img src="/logo.png" alt="RedFlag" style={{width:72,height:72,borderRadius:12,objectFit:'contain',margin:'0 auto 14px',display:'block'}}/>
           <h1 style={{fontFamily:'var(--acc)',fontSize:24,marginBottom:6}}>redflag.web3</h1>
           <p style={{color:'var(--txm)',fontSize:13}}>Enter your password to unlock</p>
         </div>
@@ -1562,7 +1562,8 @@ export default function App() {
       {/* SIDEBAR */}
       <aside className="sidebar">
         <div className="sb-logo">
-          <ShieldCheck size={22}/>redflag<span style={{fontWeight:300,opacity:.6}}>.web3</span>
+          <img src="/logo.png" alt="RF" style={{width:28,height:28,borderRadius:6,objectFit:'contain'}}/>
+          redflag<span style={{fontWeight:300,opacity:.6}}>.web3</span>
         </div>
         <nav className="sb-nav">
           <div className="nav-lbl">Main</div>

@@ -1,0 +1,25 @@
+{
+  "name": "RedFlag Token List",
+  "logoURI": "https://redflagweb3-app.onrender.com/logo.png",
+  "keywords": ["redflag", "rf", "quantum", "defi"],
+  "timestamp": "2026-04-08T00:00:00Z",
+  "version": { "major": 1, "minor": 0, "patch": 0 },
+  "tokens": [
+    {
+      "chainId": 2100,
+      "address": "0x0000000000000000000000000000000000000001",
+      "symbol": "RF",
+      "name": "RedFlag",
+      "decimals": 6,
+      "logoURI": "https://redflagweb3-app.onrender.com/logo.png",
+      "tags": ["native", "quantum-resistant"],
+      "extensions": {
+        "website": "https://redflagweb3-app.onrender.com",
+        "description": "Native token of redflag.web3 — a quantum-resistant blockchain using ML-DSA-65 + ML-KEM-768 post-quantum cryptography and Bullshark DAG consensus.",
+        "twitter": "https://twitter.com/redflagweb3",
+        "coingeckoId": "redflag",
+        "explorer": "https://redflagweb3-node1.onrender.com"
+      }
+    }
+  ]
+}

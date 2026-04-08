@@ -1345,6 +1345,7 @@ async fn market_ticker(State(state): State<ApiState>) -> Json<serde_json::Value>
             "ask":            price * 1.001,
             "volume":         p.volume_rf as f64 / 1_000_000.0,
             "isFrozen":       "0",
+            "base_logo":      "https://redflagweb3-app.onrender.com/logo.png",
         }));
     }
     Json(serde_json::json!({ "timestamp": now, "tickers": tickers }))
@@ -1389,6 +1390,8 @@ async fn market_assets() -> Json<serde_json::Value> {
             "taker_fee":       "0.3",
             "chain":           "redflag.web3",
             "chain_id":        2100,
+            "logo":            "https://redflagweb3-app.onrender.com/logo.png",
+            "website":         "https://redflagweb3-app.onrender.com",
         },
         "wETH": {
             "name":          "Wrapped ETH",

@@ -38,12 +38,12 @@ async fn main() -> Result<(), Box<dyn Error>> {
     let faucet_kp = if Path::new(&faucet_key_path).exists() {
         let hex = std::fs::read_to_string(&faucet_key_path)?;
         let bytes = hex::decode(hex.trim())?;
-        let kp: SigningKeyPair = bincode::serde::decode_from_slice::<_, _>(&bytes, bincode::config::standard()).map(|(v, _)| v)?;
+        let kp: SigningKeyPair = postcard::from_bytes::<_>(&bytes)?;
         println!("💧 Faucet: llave cargada desde {}", faucet_key_path);
         kp
     } else {
         let kp = SigningKeyPair::generate()?;
-        let pkcs8_bytes = bincode::serde::encode_to_vec(&kp, bincode::config::standard())?;
+        let pkcs8_bytes = postcard::to_allocvec(&kp)?;
         std::fs::write(&faucet_key_path, hex::encode(&pkcs8_bytes))?;
         println!("💧 Faucet: nueva llave generada en {}", faucet_key_path);
         kp
@@ -188,7 +188,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
                             };
                             let _ = node.consensus.dag.insert_certificate(cert);
 
-                            let msg = NetworkMessage::NewBlock(bincode::serde::encode_to_vec(&vertex, bincode::config::standard()).unwrap());
+                            let msg = NetworkMessage::NewBlock(postcard::to_allocvec(&vertex).unwrap());
                             node.broadcast_message(msg).await.ok();
 
                             let ordered = node.consensus.order_transactions(vertex.round);
@@ -277,19 +277,19 @@ async fn main() -> Result<(), Box<dyn Error>> {
                         SwarmEvent::Behaviour(RedFlagBehaviourEvent::Gossipsub(
                             libp2p::gossipsub::Event::Message { propagation_source, message, .. }
                         )) => {
-                            match bincode::serde::decode_from_slice::<NetworkMessage, _>(&message.data, bincode::config::standard()).map(|(v, _)| v) {
+                            match postcard::from_bytes::<NetworkMessage>(&message.data) {
                                 Ok(NetworkMessage::NewTransaction(data)) => {
-                                    if let Ok(tx) = bincode::serde::decode_from_slice::<Transaction, _>(&data, bincode::config::standard()).map(|(v, _)| v) {
+                                    if let Ok(tx) = postcard::from_bytes::<Transaction>(&data) {
                                         node.consensus.mempool.add_transaction(tx);
                                     }
                                 }
                                 Ok(NetworkMessage::NewEncryptedTransaction(data)) => {
-                                    if let Ok(etx) = bincode::serde::decode_from_slice::<EncryptedTransaction, _>(&data, bincode::config::standard()).map(|(v, _)| v) {
+                                    if let Ok(etx) = postcard::from_bytes::<EncryptedTransaction>(&data) {
                                         node.consensus.mempool.add_encrypted_transaction(etx);
                                     }
                                 }
                                 Ok(NetworkMessage::NewBlock(data)) => {
-                                    if let Ok(vertex) = bincode::serde::decode_from_slice::<redflag_consensus::Vertex, _>(&data, bincode::config::standard()).map(|(v, _)| v) {
+                                    if let Ok(vertex) = postcard::from_bytes::<redflag_consensus::Vertex>(&data) {
                                         let v_id = vertex.id();
                                         // Parent-fetching: solicitar padres faltantes
                                         for parent_id in &vertex.parents {

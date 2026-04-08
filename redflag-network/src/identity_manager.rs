@@ -62,12 +62,12 @@ impl NodeIdentity {
         if path.exists() {
             let hex_str = fs::read_to_string(path)?;
             let raw = hex::decode(hex_str.trim())?;
-            let kp: SigningKeyPair = bincode::serde::decode_from_slice::<_, _>(&raw, bincode::config::standard()).map(|(v, _)| v)?;
+            let kp: SigningKeyPair = postcard::from_bytes::<_>(&raw)?;
             println!("✅ Llave validadora ML-DSA cargada desde disco");
             Ok(kp)
         } else {
             let kp = SigningKeyPair::generate()?;
-            let bytes = bincode::serde::encode_to_vec(&kp, bincode::config::standard())?;
+            let bytes = postcard::to_allocvec(&kp)?;
             fs::write(path, hex::encode(&bytes))?;
             println!("🆕 Nueva llave ML-DSA generada → {}", path.display());
             Ok(kp)

@@ -365,7 +365,7 @@ impl RedFlagNode {
             NetworkMessage::NewTransaction(_) | NetworkMessage::NewEncryptedTransaction(_) => TOPIC_TRANSACTIONS,
             NetworkMessage::NewBlock(_) => TOPIC_BLOCKS,
         };
-        let data = bincode::serde::encode_to_vec(&msg, bincode::config::standard())?;
+        let data = postcard::to_allocvec(&msg)?;
         self.swarm.behaviour_mut().gossipsub.publish(gossipsub::IdentTopic::new(topic), data)?;
         Ok(())
     }

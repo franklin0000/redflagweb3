@@ -156,7 +156,7 @@ impl ContractVm {
             abi,
         };
 
-        let bytes = bincode::serde::encode_to_vec(&contract, bincode::config::standard())
+        let bytes = postcard::to_allocvec(&contract)
             .map_err(|e| VmError::ExecutionError(e.to_string()))?;
         self.contract_db.insert(format!("contract:{}", address), bytes).ok();
 
@@ -255,7 +255,7 @@ impl ContractVm {
             .get(format!("contract:{}", address))
             .ok()
             .flatten()
-            .and_then(|bytes| bincode::serde::decode_from_slice::<Contract, _>(&bytes, bincode::config::standard()).map(|(v, _)| v).ok())
+            .and_then(|bytes| postcard::from_bytes::<Contract>(&bytes).ok())
             .ok_or_else(|| VmError::ContractNotFound(address.to_string()))
     }
 

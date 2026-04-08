@@ -25,14 +25,14 @@ pub struct Vertex {
 impl Vertex {
     pub fn id(&self) -> VertexId {
         let mut hasher = blake3::Hasher::new();
-        hasher.update(&bincode::serde::encode_to_vec(&self.round, bincode::config::standard()).unwrap());
+        hasher.update(&postcard::to_allocvec(&self.round).unwrap());
         let mut parents_sorted: Vec<_> = self.parents.iter().collect();
         parents_sorted.sort();
         for p in parents_sorted {
             hasher.update(p);
         }
-        hasher.update(&bincode::serde::encode_to_vec(&self.transactions, bincode::config::standard()).unwrap());
-        hasher.update(&bincode::serde::encode_to_vec(&self.encrypted_transactions, bincode::config::standard()).unwrap());
+        hasher.update(&postcard::to_allocvec(&self.transactions).unwrap());
+        hasher.update(&postcard::to_allocvec(&self.encrypted_transactions).unwrap());
         hasher.update(&self.author);
         *hasher.finalize().as_bytes()
     }
@@ -75,7 +75,7 @@ impl Dag {
         let mut v_count = 0;
         for item in self.db_vertices.iter() {
             if let Ok((_, bytes)) = item {
-                if let Ok(v) = bincode::serde::decode_from_slice::<Vertex, _>(&bytes, bincode::config::standard()).map(|(v, _)| v) {
+                if let Ok(v) = postcard::from_bytes::<Vertex>(&bytes) {
                     self.vertices.insert(v.id(), Arc::new(v));
                     v_count += 1;
                 }
@@ -84,7 +84,7 @@ impl Dag {
         let mut c_count = 0;
         for item in self.db_certificates.iter() {
             if let Ok((_, bytes)) = item {
-                if let Ok(c) = bincode::serde::decode_from_slice::<Certificate, _>(&bytes, bincode::config::standard()).map(|(v, _)| v) {
+                if let Ok(c) = postcard::from_bytes::<Certificate>(&bytes) {
                     self.certificates.entry(c.round).or_insert_with(Vec::new).push(Arc::new(c));
                     c_count += 1;
                 }
@@ -98,7 +98,7 @@ impl Dag {
 
     pub fn insert_vertex(&self, vertex: Vertex) -> Result<(), anyhow::Error> {
         let id = vertex.id();
-        let bytes = bincode::serde::encode_to_vec(&vertex, bincode::config::standard())?;
+        let bytes = postcard::to_allocvec(&vertex)?;
         self.db_vertices.insert(id, bytes)?;
         self.vertices.insert(id, Arc::new(vertex));
         Ok(())
@@ -109,7 +109,7 @@ impl Dag {
     }
 
     pub fn insert_certificate(&self, cert: Certificate) -> Result<(), anyhow::Error> {
-        let bytes = bincode::serde::encode_to_vec(&cert, bincode::config::standard())?;
+        let bytes = postcard::to_allocvec(&cert)?;
         let key = format!("{}_{}", cert.round, hex::encode(&cert.vertex_id[0..4]));
         self.db_certificates.insert(key, bytes)?;
         self.certificates.entry(cert.round).or_insert_with(Vec::new).push(Arc::new(cert));
@@ -146,14 +146,14 @@ impl Mempool {
 
     pub fn add_transaction(&self, tx: Transaction) {
         let mut hasher = blake3::Hasher::new();
-        hasher.update(&bincode::serde::encode_to_vec(&tx, bincode::config::standard()).unwrap());
+        hasher.update(&postcard::to_allocvec(&tx).unwrap());
         let id = *hasher.finalize().as_bytes();
         self.pending_transactions.insert(id, tx);
     }
 
     pub fn add_encrypted_transaction(&self, etx: EncryptedTransaction) {
         let mut hasher = blake3::Hasher::new();
-        hasher.update(&bincode::serde::encode_to_vec(&etx, bincode::config::standard()).unwrap());
+        hasher.update(&postcard::to_allocvec(&etx).unwrap());
         let id = *hasher.finalize().as_bytes();
         self.pending_encrypted_transactions.insert(id, etx);
     }
@@ -167,7 +167,7 @@ impl Mempool {
             .collect();
         // Limpiar las TXs que ya se incluyeron
         for tx in &txs {
-            let id = blake3::hash(&bincode::serde::encode_to_vec(tx, bincode::config::standard()).unwrap_or_default());
+            let id = blake3::hash(&postcard::to_allocvec(tx).unwrap_or_default());
             self.pending_transactions.remove(id.as_bytes());
         }
 
@@ -177,7 +177,7 @@ impl Mempool {
             .map(|kv| kv.value().clone())
             .collect();
         for etx in &etxs {
-            let id = blake3::hash(&bincode::serde::encode_to_vec(etx, bincode::config::standard()).unwrap_or_default());
+            let id = blake3::hash(&postcard::to_allocvec(etx).unwrap_or_default());
             self.pending_encrypted_transactions.remove(id.as_bytes());
         }
 
@@ -228,7 +228,7 @@ impl ConsensusEngine {
 
         let committed_vertices = DashSet::new();
         if let Ok(Some(bytes)) = db_metadata.get("committed_vertices") {
-            if let Ok((set, _)) = bincode::serde::decode_from_slice::<HashSet<VertexId>, _>(bytes.as_ref(), bincode::config::standard()) {
+            if let Ok(set) = postcard::from_bytes::<HashSet<VertexId>>(bytes.as_ref()) {
                 for id in set { committed_vertices.insert(id); }
             }
         }
@@ -386,13 +386,13 @@ impl ConsensusEngine {
                 // Limpiar mempool de TXs ya confirmadas
                 for tx in &v.transactions {
                     let mut hasher = blake3::Hasher::new();
-                    hasher.update(&bincode::serde::encode_to_vec(tx, bincode::config::standard()).unwrap_or_default());
+                    hasher.update(&postcard::to_allocvec(tx).unwrap_or_default());
                     let tx_id = *hasher.finalize().as_bytes();
                     self.mempool.pending_transactions.remove(&tx_id);
                 }
                 for etx in &v.encrypted_transactions {
                     let mut hasher = blake3::Hasher::new();
-                    hasher.update(&bincode::serde::encode_to_vec(etx, bincode::config::standard()).unwrap_or_default());
+                    hasher.update(&postcard::to_allocvec(etx).unwrap_or_default());
                     let tx_id = *hasher.finalize().as_bytes();
                     self.mempool.pending_encrypted_transactions.remove(&tx_id);
                 }
@@ -411,7 +411,7 @@ impl ConsensusEngine {
             .iter()
             .map(|e| *e.key())
             .collect();
-        if let Ok(bytes) = bincode::serde::encode_to_vec(&ids, bincode::config::standard()) {
+        if let Ok(bytes) = postcard::to_allocvec(&ids) {
             self.db_metadata.insert("committed_vertices", bytes).ok();
         }
     }

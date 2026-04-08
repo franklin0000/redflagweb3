@@ -129,7 +129,7 @@ impl RedFlagClient {
                     .find(|c| c.chain_id() == bridge_data.to_chain_id)?;
 
                 Some(RfLockEvent {
-                    rf_tx_hash:      blake3_hex(&bincode::serde::encode_to_vec(tx, bincode::config::standard()).unwrap_or_default()),
+                    rf_tx_hash:      blake3_hex(&postcard::to_allocvec(tx).unwrap_or_default()),
                     from_rf_address: tx.sender.clone(),
                     to_evm_address:  bridge_data.to_evm_address,
                     to_chain:        chain,

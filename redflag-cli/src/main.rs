@@ -62,7 +62,7 @@ async fn main() -> anyhow::Result<()> {
             println!("🔐 Generando llaves Post-Cuánticas (ML-DSA-65)...");
             let keypair = SigningKeyPair::generate()?;
             let pubkey_hex = hex::encode(keypair.public_key());
-            let privkey_hex = hex::encode(bincode::serde::encode_to_vec(&keypair, bincode::config::standard()).unwrap());
+            let privkey_hex = hex::encode(postcard::to_allocvec(&keypair).unwrap());
 
             fs::write("redflag.pub", &pubkey_hex)?;
             fs::write("redflag.priv", &privkey_hex)?;
@@ -93,7 +93,7 @@ async fn main() -> anyhow::Result<()> {
             }
 
             let priv_hex = fs::read_to_string(key)?;
-            let keypair: SigningKeyPair = bincode::serde::decode_from_slice(&hex::decode(priv_hex.trim())?, bincode::config::standard()).map(|(v, _)| v)?;
+            let keypair: SigningKeyPair = postcard::from_bytes(&hex::decode(priv_hex.trim())?)?;
             let sender = hex::encode(keypair.public_key());
 
             // Obtener nonce actual del nodo
@@ -113,7 +113,7 @@ async fn main() -> anyhow::Result<()> {
             );
 
             // Firmar con ML-DSA
-            let msg = bincode::serde::encode_to_vec(&tx, bincode::config::standard())?;
+            let msg = postcard::to_allocvec(&tx)?;
             tx.signature = keypair.sign(&msg)?;
 
             let url = format!("{}/tx", cli.node_url);

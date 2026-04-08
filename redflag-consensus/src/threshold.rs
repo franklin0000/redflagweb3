@@ -87,7 +87,7 @@ impl ThresholdMempool {
 
         let plaintext = xor_cipher(&etx.encrypted_payload, &shared_secret);
 
-        let payload: PrivateTxPayload = bincode::serde::decode_from_slice::<_, _>(&plaintext, bincode::config::standard()).map(|(v, _)| v)?;
+        let payload: PrivateTxPayload = postcard::from_bytes::<_>(&plaintext)?;
         let commitment = blake3::hash(&plaintext);
         if commitment.as_bytes() != &etx.payload_commitment {
             anyhow::bail!("Commitment mismatch");
@@ -122,7 +122,7 @@ pub fn encrypt_payload(
     payload: &PrivateTxPayload,
     _round: u64,
 ) -> anyhow::Result<(Vec<u8>, Vec<u8>, [u8; 32])> {
-    let plaintext = bincode::serde::encode_to_vec(payload, bincode::config::standard())?;
+    let plaintext = postcard::to_allocvec(payload)?;
     let commitment = *blake3::hash(&plaintext).as_bytes();
 
     let ek = EncapsulationKey::new(&ML_KEM_768, ek_bytes)?;

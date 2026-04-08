@@ -15,4 +15,4 @@ reqwest = { workspace = true }
 clap = { workspace = true }
 hex = { workspace = true }
 anyhow = { workspace = true }
-bincode = { workspace = true }
+postcard = { workspace = true }

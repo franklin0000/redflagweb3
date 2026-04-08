@@ -232,7 +232,7 @@ fn sign_and_submit(
         timestamp: now_secs(),
     };
 
-    let msg = match bincode::serde::encode_to_vec(&tx, bincode::config::standard()) {
+    let msg = match postcard::to_allocvec(&tx) {
         Ok(b) => b,
         Err(e) => return TxResponse { accepted: false, message: format!("Serialize: {}", e), tx_hash: None },
     };
@@ -461,7 +461,7 @@ async fn explorer_tx(
 ) -> Json<serde_json::Value> {
     // Búsqueda O(1) directa por hash en tx_index
     if let Some(tx) = state.consensus.state.get_tx_by_hash(&hash) {
-        let tx_bytes = bincode::serde::encode_to_vec(&tx, bincode::config::standard()).unwrap_or_default();
+        let tx_bytes = postcard::to_allocvec(&tx).unwrap_or_default();
         let tx_hash = hex::encode(blake3::hash(&tx_bytes).as_bytes());
         return Json(serde_json::json!({
             "type": "transaction",
@@ -478,7 +478,7 @@ async fn explorer_tx(
     }
     // Fallback: buscar por prefijo en historial reciente
     for tx in state.consensus.state.get_recent_txs(500) {
-        let tx_bytes = bincode::serde::encode_to_vec(&tx, bincode::config::standard()).unwrap_or_default();
+        let tx_bytes = postcard::to_allocvec(&tx).unwrap_or_default();
         let tx_hash = hex::encode(blake3::hash(&tx_bytes).as_bytes());
         if tx_hash.starts_with(&hash) {
             return Json(serde_json::json!({
@@ -558,7 +558,7 @@ async fn submit_transaction(
     }
     let pubkey_bytes = hex::decode(&tx.sender).unwrap_or_default();
     let signature = std::mem::take(&mut tx.signature);
-    let msg = bincode::serde::encode_to_vec(&tx, bincode::config::standard()).unwrap_or_default();
+    let msg = postcard::to_allocvec(&tx).unwrap_or_default();
     tx.signature = signature.clone();
     if Verifier::verify(&pubkey_bytes, &msg, &signature).is_err() {
         return (StatusCode::UNAUTHORIZED, Json(TxResponse { accepted: false, message: "Firma inválida".into(), tx_hash: None }));
@@ -652,7 +652,7 @@ async fn wallet_new() -> Json<WalletNewResponse> {
     match SigningKeyPair::generate() {
         Ok(kp) => {
             let address = hex::encode(kp.public_key());
-            let pkcs8_hex = bincode::serde::encode_to_vec(&kp, bincode::config::standard()).map(hex::encode).unwrap_or_default();
+            let pkcs8_hex = postcard::to_allocvec(&kp).map(hex::encode).unwrap_or_default();
             Json(WalletNewResponse {
                 address, private_key_hex: pkcs8_hex,
                 warning: "TESTNET ONLY — Guarda tu clave privada de forma segura.",
@@ -676,7 +676,7 @@ async fn wallet_send(
         Ok(b) => b,
         Err(_) => return (StatusCode::BAD_REQUEST, Json(TxResponse { accepted: false, message: "private_key_hex inválido".into(), tx_hash: None })),
     };
-    let kp: SigningKeyPair = match bincode::serde::decode_from_slice(&pkcs8_bytes, bincode::config::standard()).map(|(v, _): (SigningKeyPair, _)| v) {
+    let kp: SigningKeyPair = match postcard::from_bytes::<SigningKeyPair>(&pkcs8_bytes) {
         Ok(k) => k,
         Err(_) => return (StatusCode::BAD_REQUEST, Json(TxResponse { accepted: false, message: "Clave privada inválida".into(), tx_hash: None })),
     };
@@ -983,7 +983,7 @@ async fn dex_swap(
         Ok(b) => b,
         Err(_) => return (StatusCode::BAD_REQUEST, Json(serde_json::json!({ "error": "private_key_hex inválido" }))),
     };
-    let kp: redflag_crypto::SigningKeyPair = match bincode::serde::decode_from_slice(&pkcs8_bytes, bincode::config::standard()).map(|(v, _): (redflag_crypto::SigningKeyPair, _)| v) {
+    let kp: redflag_crypto::SigningKeyPair = match postcard::from_bytes::<redflag_crypto::SigningKeyPair>(&pkcs8_bytes) {
         Ok(k) => k,
         Err(_) => return (StatusCode::BAD_REQUEST, Json(serde_json::json!({ "error": "Clave inválida" }))),
     };
@@ -1062,7 +1062,7 @@ async fn dex_add_liquidity(
         Ok(b) => b,
         Err(_) => return (StatusCode::BAD_REQUEST, Json(serde_json::json!({ "error": "Clave inválida" }))),
     };
-    let kp: redflag_crypto::SigningKeyPair = match bincode::serde::decode_from_slice(&pkcs8_bytes, bincode::config::standard()).map(|(v, _): (redflag_crypto::SigningKeyPair, _)| v) {
+    let kp: redflag_crypto::SigningKeyPair = match postcard::from_bytes::<redflag_crypto::SigningKeyPair>(&pkcs8_bytes) {
         Ok(k) => k,
         Err(_) => return (StatusCode::BAD_REQUEST, Json(serde_json::json!({ "error": "Clave inválida" }))),
     };
@@ -1115,7 +1115,7 @@ async fn dex_remove_liquidity(
         Ok(b) => b,
         Err(_) => return (StatusCode::BAD_REQUEST, Json(serde_json::json!({ "error": "Clave inválida" }))),
     };
-    let kp: redflag_crypto::SigningKeyPair = match bincode::serde::decode_from_slice(&pkcs8_bytes, bincode::config::standard()).map(|(v, _): (redflag_crypto::SigningKeyPair, _)| v) {
+    let kp: redflag_crypto::SigningKeyPair = match postcard::from_bytes::<redflag_crypto::SigningKeyPair>(&pkcs8_bytes) {
         Ok(k) => k,
         Err(_) => return (StatusCode::BAD_REQUEST, Json(serde_json::json!({ "error": "Clave inválida" }))),
     };

@@ -9,7 +9,7 @@ redflag-crypto = { path = "../redflag-crypto" }
 redflag-state = { path = "../redflag-state" }
 tokio = { workspace = true }
 serde = { workspace = true }
-bincode = { workspace = true }
+postcard = { workspace = true }
 blake3 = { workspace = true }
 dashmap = { workspace = true }
 hex = { workspace = true }

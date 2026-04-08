@@ -1,0 +1,33 @@
+{
+  "name": "@redflag/sdk",
+  "version": "1.0.0",
+  "description": "Official SDK for building apps on the RedFlag Network",
+  "chain_id": 2100,
+  "rpc": "https://redflagweb3-node1.onrender.com",
+  "bridge": "https://redflagweb3-bridge.onrender.com",
+  "install": "npm install @redflag/sdk",
+  "github": "https://github.com/franklin0000/redflagweb3/tree/main/redflag-sdk",
+  "modules": {
+    "RedflagClient": "Base HTTP client — chain info, balances, transactions",
+    "DexClient": "DEX: pools, quotes, swaps, liquidity",
+    "StakingClient": "Staking: info, stake, unstake",
+    "BridgeClient": "Cross-chain bridge: EVM ↔ RF"
+  },
+  "quick_start": [
+    "import { createSDK } from '@redflag/sdk'",
+    "const { chain, dex, staking, bridge } = createSDK()",
+    "const balance = await chain.getBalance('your-rf-address')",
+    "const pools   = await dex.getPools()",
+    "const quote   = await dex.getQuote({ pool_id: 'RF_wETH', input_token: 'RF', amount_in: 1000000 })"
+  ],
+  "metamask": {
+    "method": "wallet_addEthereumChain",
+    "params": {
+      "chainId": "0x834",
+      "chainName": "RedFlag Network",
+      "nativeCurrency": { "name": "RedFlag", "symbol": "RF", "decimals": 6 },
+      "rpcUrls": ["https://redflagweb3-node1.onrender.com"],
+      "blockExplorerUrls": ["https://redflagweb3-node1.onrender.com"]
+    }
+  }
+}

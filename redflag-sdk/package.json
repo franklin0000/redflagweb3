@@ -1,0 +1,24 @@
+{
+  "name": "@redflag/sdk",
+  "version": "1.0.0",
+  "description": "Official SDK for building apps on the RedFlag Network (Chain ID 2100) — quantum-resistant blockchain with DEX, staking, and bridge.",
+  "type": "module",
+  "main": "./src/index.js",
+  "exports": {
+    ".": "./src/index.js",
+    "./client": "./src/client.js",
+    "./dex": "./src/dex.js",
+    "./wallet": "./src/wallet.js",
+    "./staking": "./src/staking.js",
+    "./bridge": "./src/bridge.js"
+  },
+  "keywords": ["redflag", "web3", "blockchain", "quantum-resistant", "dex", "sdk"],
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/franklin0000/redflagweb3"
+  },
+  "homepage": "https://redflagweb3-app.onrender.com",
+  "dependencies": {},
+  "devDependencies": {}
+}

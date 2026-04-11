@@ -82,6 +82,18 @@ class RedFlagSDK {
     // ── Staking ──
     async getStakingInfo()   { return (await axios.get(`${this.nodeUrl}/staking/info`)).data; }
     async getStakes()        { return (await axios.get(`${this.nodeUrl}/staking/stakes`)).data; }
+    async stakingStake(private_key_hex, amount) {
+        return (await axios.post(`${this.nodeUrl}/staking/stake`, { private_key_hex, amount: parseInt(amount) })).data;
+    }
+    async stakingUnstake(private_key_hex) {
+        return (await axios.post(`${this.nodeUrl}/staking/unstake`, { private_key_hex })).data;
+    }
+    async stakingWithdraw(private_key_hex) {
+        return (await axios.post(`${this.nodeUrl}/staking/withdraw`, { private_key_hex })).data;
+    }
+    async stakingRewards(address) {
+        return (await axios.get(`${this.nodeUrl}/staking/rewards/${address}`)).data;
+    }
 
     // ── Wallet API ──
     async walletNew() {

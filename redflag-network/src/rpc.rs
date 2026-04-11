@@ -185,8 +185,13 @@ pub fn create_router(state: ApiState) -> Router {
         // Validadores
         .route("/validators",             get(get_validators))
         .route("/validators/apply",       post(validator_apply))
+        // Staking
         .route("/staking/info",           get(staking_info))
         .route("/staking/stakes",         get(get_stakes))
+        .route("/staking/stake",          post(staking_stake))
+        .route("/staking/unstake",        post(staking_unstake))
+        .route("/staking/withdraw",       post(staking_withdraw))
+        .route("/staking/rewards/:addr",  get(staking_rewards))
         // WebSocket tiempo real
         .route("/ws",               get(ws_handler))
         // Métricas Prometheus
@@ -1513,4 +1518,153 @@ pub async fn run_server(
         }
     }
     Ok(())
+}
+
+// ── Staking endpoints ─────────────────────────────────────────────────────────
+
+#[derive(Deserialize)]
+struct StakeRequest {
+    private_key_hex: String,
+    amount: u64,
+}
+
+#[derive(Deserialize)]
+struct UnstakeRequest {
+    private_key_hex: String,
+}
+
+async fn staking_stake(
+    State(state): State<ApiState>,
+    Json(req): Json<StakeRequest>,
+) -> (StatusCode, Json<serde_json::Value>) {
+    use redflag_crypto::SigningKeyPair;
+
+    let kp_bytes = match hex::decode(&req.private_key_hex) {
+        Ok(b) => b,
+        Err(_) => return (StatusCode::BAD_REQUEST, Json(serde_json::json!({"error": "private_key_hex inválido"}))),
+    };
+    let kp: SigningKeyPair = match postcard::from_bytes(&kp_bytes) {
+        Ok(k) => k,
+        Err(_) => return (StatusCode::BAD_REQUEST, Json(serde_json::json!({"error": "keypair inválido"}))),
+    };
+    let address = hex::encode(kp.public_key());
+    let current_round = state.consensus.get_current_round();
+
+    // Cobrar el stake del balance de la cuenta
+    let balance = state.consensus.state.get_balance(&address);
+    if balance < req.amount {
+        return (StatusCode::BAD_REQUEST, Json(serde_json::json!({
+            "error": format!("Saldo insuficiente: {} RF disponibles, {} requeridos", balance, req.amount)
+        })));
+    }
+
+    // Debitar del balance
+    if let Some(mut acc) = state.consensus.state.get_account(&address) {
+        acc.balance -= req.amount;
+        let _ = state.consensus.state.save_account_pub(&acc);
+    }
+
+    match state.consensus.state.staking.stake(&address, req.amount, current_round) {
+        Ok(_) => {
+            emit(&state.ws_tx, "staking_stake", serde_json::json!({
+                "address": &address[..16.min(address.len())],
+                "amount": req.amount,
+            }));
+            (StatusCode::OK, Json(serde_json::json!({
+                "success": true,
+                "message": format!("{} RF bloqueados como stake en ronda {}", req.amount, current_round),
+                "address": &address[..16.min(address.len())],
+            })))
+        }
+        Err(e) => (StatusCode::BAD_REQUEST, Json(serde_json::json!({"error": e.to_string()}))),
+    }
+}
+
+async fn staking_unstake(
+    State(state): State<ApiState>,
+    Json(req): Json<UnstakeRequest>,
+) -> (StatusCode, Json<serde_json::Value>) {
+    use redflag_crypto::SigningKeyPair;
+
+    let kp_bytes = match hex::decode(&req.private_key_hex) {
+        Ok(b) => b,
+        Err(_) => return (StatusCode::BAD_REQUEST, Json(serde_json::json!({"error": "private_key_hex inválido"}))),
+    };
+    let kp: SigningKeyPair = match postcard::from_bytes(&kp_bytes) {
+        Ok(k) => k,
+        Err(_) => return (StatusCode::BAD_REQUEST, Json(serde_json::json!({"error": "keypair inválido"}))),
+    };
+    let address = hex::encode(kp.public_key());
+    let current_round = state.consensus.get_current_round();
+
+    match state.consensus.state.staking.begin_unstake(&address, current_round) {
+        Ok(unlock_round) => (StatusCode::OK, Json(serde_json::json!({
+            "success": true,
+            "message": format!("Unbonding iniciado. Podrás retirar en ronda {}", unlock_round),
+            "unlock_round": unlock_round,
+        }))),
+        Err(e) => (StatusCode::BAD_REQUEST, Json(serde_json::json!({"error": e.to_string()}))),
+    }
+}
+
+async fn staking_withdraw(
+    State(state): State<ApiState>,
+    Json(req): Json<UnstakeRequest>,
+) -> (StatusCode, Json<serde_json::Value>) {
+    use redflag_crypto::SigningKeyPair;
+
+    let kp_bytes = match hex::decode(&req.private_key_hex) {
+        Ok(b) => b,
+        Err(_) => return (StatusCode::BAD_REQUEST, Json(serde_json::json!({"error": "private_key_hex inválido"}))),
+    };
+    let kp: SigningKeyPair = match postcard::from_bytes(&kp_bytes) {
+        Ok(k) => k,
+        Err(_) => return (StatusCode::BAD_REQUEST, Json(serde_json::json!({"error": "keypair inválido"}))),
+    };
+    let address = hex::encode(kp.public_key());
+    let current_round = state.consensus.get_current_round();
+
+    match state.consensus.state.staking.complete_unstake(&address, current_round) {
+        Ok(amount) => {
+            // Devolver RF al balance
+            let mut acc = state.consensus.state.get_account(&address).unwrap_or(
+                redflag_state::Account { address: address.clone(), balance: 0, nonce: 0 }
+            );
+            acc.balance += amount;
+            let _ = state.consensus.state.save_account_pub(&acc);
+            (StatusCode::OK, Json(serde_json::json!({
+                "success": true,
+                "message": format!("{} RF devueltos a tu wallet", amount),
+                "amount": amount,
+            })))
+        }
+        Err(e) => (StatusCode::BAD_REQUEST, Json(serde_json::json!({"error": e.to_string()}))),
+    }
+}
+
+async fn staking_rewards(
+    Path(addr): Path<String>,
+    State(state): State<ApiState>,
+) -> Json<serde_json::Value> {
+    let stake = state.consensus.state.staking.get_stake(&addr);
+    let stats = state.consensus.state.staking.stats();
+    let fee_pool = state.consensus.state.get_balance("RedFlag_Protocol_FeePool");
+
+    let estimated_share = if stats.total_staked > 0 {
+        if let Some(ref s) = stake {
+            fee_pool * s.amount / stats.total_staked
+        } else { 0 }
+    } else { 0 };
+
+    Json(serde_json::json!({
+        "address": &addr[..16.min(addr.len())],
+        "stake": stake.map(|s| serde_json::json!({
+            "amount": s.amount,
+            "since_round": s.since_round,
+            "unbonding_at": s.unbonding_at,
+        })),
+        "fee_pool_total": fee_pool,
+        "estimated_reward": estimated_share,
+        "total_staked": stats.total_staked,
+    }))
 }

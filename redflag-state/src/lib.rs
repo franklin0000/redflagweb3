@@ -11,6 +11,9 @@ pub use dex::{DexState, LiquidityPool, SwapRecord, LpPosition, DEX_FEE_ADDRESS};
 pub mod tokens;
 pub use tokens::{TokenLedger, TokenBalance, SUPPORTED_TOKENS, TOKEN_DECIMALS};
 
+pub mod staking;
+pub use staking::{StakingState, StakeRecord, StakingStats, MIN_STAKE};
+
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct Account {
     pub address: String,
@@ -26,6 +29,7 @@ pub struct StateDB {
     pub vm: Option<ContractVm>,
     pub dex: DexState,
     pub tokens: TokenLedger,
+    pub staking: StakingState,
 }
 
 impl StateDB {
@@ -46,10 +50,14 @@ impl StateDB {
         let token_balances = db.open_tree("token_balances")?;
         let tokens = TokenLedger::new(token_balances);
 
+        // Staking de validadores
+        let staking_tree = db.open_tree("staking")?;
+        let staking = StakingState::new(staking_tree);
+
         let vm_path = format!("{}_vm", path);
         let vm = ContractVm::new(&vm_path).ok();
 
-        let state = Self { db, tx_history, tx_index, tx_counter, vm, dex, tokens };
+        let state = Self { db, tx_history, tx_index, tx_counter, vm, dex, tokens, staking };
         state.ensure_genesis()?;
         state.ensure_dex_pools()?;
         Ok(state)

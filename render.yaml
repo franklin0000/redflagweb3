@@ -1,0 +1,43 @@
+services:
+  # ── Nodo 1 (Principal) ────────────────────────────────────────────────────
+  - type: web
+    name: redflagweb3-node1
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    plan: starter
+    region: ohio
+    envVars:
+      - key: PORT
+        value: 8545
+      - key: P2P_PORT
+        value: 9000
+      - key: DATA_DIR
+        value: /data
+      - key: RUST_LOG
+        value: warn
+      - key: NODE_NAME
+        value: node1
+
+  # ── Nodo 2 (Secundario / Validator) ──────────────────────────────────────
+  - type: web
+    name: redflagweb3-node2
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    plan: starter
+    region: ohio
+    envVars:
+      - key: PORT
+        value: 8545
+      - key: P2P_PORT
+        value: 9000
+      - key: DATA_DIR
+        value: /data
+      - key: RUST_LOG
+        value: warn
+      - key: NODE_NAME
+        value: node2
+      - key: BOOTSTRAP_PEER
+        fromService:
+          name: redflagweb3-node1
+          type: web
+          property: host

@@ -1133,8 +1133,8 @@ function encodelock(rfAddress) {
 // ─────────────────────────────────────────────
 // STAKING PAGE
 // ─────────────────────────────────────────────
-const STAKE_ADDRESS = 'RedFlag_Protocol_Stake_v1';
-const MIN_STAKE = 10_000_000_000; // 10,000 RF en microRF
+const RF_UNIT = 1_000_000; // 1 RF = 1,000,000 microRF
+const MIN_STAKE_RF = 10_000; // mínimo 10,000 RF para ser validador
 
 function StakingPage({ wallet }) {
   const [info, setInfo]       = useState(null);
@@ -1177,17 +1177,43 @@ function StakingPage({ wallet }) {
 
   const handleStake = async () => {
     if (!wallet) return notify('err', 'Conecta tu wallet primero');
-    const amt = Number(amount);
-    if (amt < MIN_STAKE) return notify('err', `Mínimo ${MIN_STAKE / 1_000_000} RF para hacer stake`);
-    if (balance < amt + 1) return notify('err', `Saldo insuficiente: tienes ${balance} RF`);
+    const amtRF = Number(amount);
+    if (!amtRF || amtRF < MIN_STAKE_RF) return notify('err', `Mínimo ${MIN_STAKE_RF} RF para hacer stake`);
+    const rawAmt = Math.floor(amtRF * RF_UNIT);
+    if (balance < rawAmt) return notify('err', `Saldo insuficiente: tienes ${Math.floor(balance/RF_UNIT)} RF`);
     setBusy(true);
     try {
-      const res = await sdk.walletSend(wallet.private_key_hex, STAKE_ADDRESS, amt, 1);
-      if (res.accepted) {
-        notify('ok', `✅ Stake enviado: ${amt / 1_000_000} RF → te conviertes en validador en la próxima ronda`);
+      const res = await sdk.stakingStake(wallet.private_key_hex, rawAmt);
+      if (res.success) {
+        notify('ok', `✅ ${amtRF} RF en stake — eres validador en la próxima ronda`);
         setAmount('');
-        setTimeout(fetchData, 3000);
-      } else notify('err', res.message || 'Error');
+        setTimeout(fetchData, 2000);
+      } else notify('err', res.error || res.message || 'Error');
+    } catch(e) { notify('err', e.response?.data?.error || e.message); }
+    setBusy(false);
+  };
+
+  const handleUnstake = async () => {
+    if (!wallet) return notify('err', 'Conecta tu wallet primero');
+    if (myStake === 0) return notify('err', 'No tienes stake activo');
+    setBusy(true);
+    try {
+      const res = await sdk.stakingUnstake(wallet.private_key_hex);
+      if (res.success) notify('ok', res.message || '⏳ Unbonding iniciado — retira en 10 rondas');
+      else notify('err', res.error || 'Error');
+      setTimeout(fetchData, 2000);
+    } catch(e) { notify('err', e.response?.data?.error || e.message); }
+    setBusy(false);
+  };
+
+  const handleWithdraw = async () => {
+    if (!wallet) return notify('err', 'Conecta tu wallet primero');
+    setBusy(true);
+    try {
+      const res = await sdk.stakingWithdraw(wallet.private_key_hex);
+      if (res.success) notify('ok', res.message || '✅ RF devueltos a tu wallet');
+      else notify('err', res.error || 'Error');
+      setTimeout(fetchData, 2000);
     } catch(e) { notify('err', e.response?.data?.error || e.message); }
     setBusy(false);
   };
@@ -1315,20 +1341,17 @@ function StakingPage({ wallet }) {
               <Shield size={16}/> Hacer Stake
             </div>
             <div style={{fontSize:12,color:'var(--txl)'}}>
-              Saldo disponible: <span style={{color:'var(--tx)',fontWeight:700}}>{fmtN(balance)} RF</span>
+              Saldo disponible: <span style={{color:'var(--tx)',fontWeight:700}}>{fmtN(Math.floor(balance/RF_UNIT))} RF</span>
             </div>
             <div>
-              <div style={{fontSize:11,color:'var(--txl)',marginBottom:4}}>Cantidad a stakear (mín. 10,000 RF)</div>
-              <input className="inp" type="number" placeholder="10000000000"
+              <div style={{fontSize:11,color:'var(--txl)',marginBottom:4}}>Cantidad a stakear en RF (mín. {MIN_STAKE_RF.toLocaleString()} RF)</div>
+              <input className="inp" type="number" placeholder="10000"
                 value={amount} onChange={e=>setAmount(e.target.value)}
                 style={{width:'100%',boxSizing:'border-box'}}
               />
-              <div style={{fontSize:10,color:'var(--txl)',marginTop:4}}>
-                Destino: <span style={{fontFamily:'monospace',color:'var(--green)'}}>{STAKE_ADDRESS}</span>
-              </div>
             </div>
 
-            {amount && Number(amount) >= MIN_STAKE && (
+            {amount && Number(amount) >= MIN_STAKE_RF && (
               <div style={{background:'var(--bg3)',borderRadius:8,padding:'10px 12px',fontSize:12}}>
                 <div style={{display:'flex',justifyContent:'space-between',marginBottom:4}}>
                   <span style={{color:'var(--txl)'}}>Recompensa/día estimada</span>
@@ -1336,7 +1359,7 @@ function StakingPage({ wallet }) {
                 </div>
                 <div style={{display:'flex',justifyContent:'space-between'}}>
                   <span style={{color:'var(--txl)'}}>Registro como validador</span>
-                  <span style={{color:'var(--green)'}}>Inmediato</span>
+                  <span style={{color:'var(--green)'}}>Inmediato (siguiente ronda)</span>
                 </div>
               </div>
             )}
@@ -1346,6 +1369,16 @@ function StakingPage({ wallet }) {
               {busy ? <RefreshCw size={14} className="spin"/> : <Shield size={14}/>}
               {busy ? 'Procesando…' : 'Stake & Convertirme en Validador'}
             </button>
+            {myStake > 0 && (
+              <div style={{display:'flex',gap:8}}>
+                <button className="btn" style={{flex:1,fontSize:12}} onClick={handleUnstake} disabled={busy||!wallet}>
+                  ⏳ Iniciar Unstake
+                </button>
+                <button className="btn" style={{flex:1,fontSize:12,background:'var(--purple)'}} onClick={handleWithdraw} disabled={busy||!wallet}>
+                  💰 Retirar RF
+                </button>
+              </div>
+            )}
           </div>
 
           {/* Info económica */}

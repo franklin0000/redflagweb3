@@ -745,12 +745,13 @@ async fn wallet_faucet(
         }));
     }
 
-    const MAX_FAUCET: u64 = 1_000; // Reducido de 10,000 a 1,000 RF máximo por solicitud
+    const MAX_FAUCET: u64 = 10_000_000_000; // máx 10,000 RF por solicitud (10B microRF)
+    const DEFAULT_FAUCET: u64 = 1_000_000_000; // 1,000 RF por defecto (1B microRF)
     let faucet_bal = state.consensus.state.get_balance(&state.faucet_address);
     if faucet_bal < MIN_FEE + 1 {
         return (StatusCode::SERVICE_UNAVAILABLE, Json(TxResponse { accepted: false, message: "Faucet vacío".into(), tx_hash: None }));
     }
-    let amount = req.amount.unwrap_or(100).min(MAX_FAUCET); // default 100, max 1000
+    let amount = req.amount.unwrap_or(DEFAULT_FAUCET).min(MAX_FAUCET);
     if faucet_bal < amount + MIN_FEE {
         return (StatusCode::BAD_REQUEST, Json(TxResponse { accepted: false, message: format!("Faucet solo tiene {} RF", faucet_bal), tx_hash: None }));
     }

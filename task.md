@@ -62,19 +62,26 @@
 
 ---
 
-## 🚀 EN PROGRESO
+## ✅ COMPLETADO RECIENTEMENTE (2026-04-11)
 
-### Staking de Validadores
-- [ ] `StakingState` en `redflag-state` — staking, unstaking, slashing
-- [ ] Distribución de fees del fee pool a validadores stakers
-- [ ] Endpoints RPC: /staking/stake, /staking/unstake, /staking/rewards
-- [ ] Validadores deben tener stake mínimo para participar en consenso
+### Staking de Validadores ✅
+- [x] `StakingState` en `redflag-state` — stake, unstake, withdraw, distribute_fees
+- [x] Endpoints RPC: /staking/stake, /staking/unstake, /staking/withdraw, /staking/rewards
+- [x] Frontend staking: unidades RF correctas, botones unstake/withdraw, usa endpoint dedicado
+- [x] Faucet: corregido a 1,000 RF por defecto (antes: 0.0001 RF)
+
+### CLI completa ✅
+- [x] keygen, balance, transfer, status, history
+- [x] faucet, stake, unstake, withdraw, staking-info
+- [x] dex-pools, dex-quote, dex-swap
 
 ---
 
 ## 📋 PRÓXIMAS TAREAS
 
-- [ ] Deploy en producción (Render / VPS)
-- [ ] Frontend del nodo (`redflag-web`) — conectar con RPC real
-- [ ] Cert aggregation multi-nodo real (2f+1 firmas para commit)
-- [ ] CLI completa (`redflag-cli`) — wallet, send, faucet, dex
+- [ ] Deploy en VPS propio con dominio real (nginx + SSL Let's Encrypt)
+- [ ] Cert aggregation multi-nodo real (2f+1 firmas para commit definitivo)
+- [ ] Distribución automática de fees del fee pool a validadores por ronda
+- [ ] redflag.web3 domain — configurar manualmente en unstoppabledomains.com:
+      browser.redirect_url=https://redflagweb3-app.onrender.com
+      dweb.ipfs.hash=QmSC5VEFHRWT1XTBohtyWwhRMyYMdupwViw8CztgQQfr5U

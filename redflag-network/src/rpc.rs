@@ -29,6 +29,9 @@ const FAUCET_COOLDOWN_SECS: u64 = 86_400; // 24 horas
 const API_RATE_WINDOW_SECS: u64 = 60;      // ventana de 1 minuto
 const API_RATE_MAX_REQ: u32 = 60;          // máximo 60 req/min por IP
 
+/// Pending nonce cache: address → next nonce to use (may be ahead of committed state)
+pub type PendingNonces = Arc<DashMap<String, u64>>;
+
 #[derive(Clone)]
 pub struct ApiState {
     pub consensus: Arc<ConsensusEngine>,
@@ -41,6 +44,8 @@ pub struct ApiState {
     pub faucet_cooldowns: FaucetCooldowns,
     /// Rate limit por IP
     pub ip_rate_limits: IpRateLimits,
+    /// Pending nonce cache — tracks ahead of committed state to avoid nonce conflicts
+    pub pending_nonces: PendingNonces,
 }
 
 // ── Tipos de respuesta ───────────────────────────────────────────────────────
@@ -211,6 +216,51 @@ pub fn create_router(state: ApiState) -> Router {
 
 fn now_secs() -> u64 {
     SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_secs()
+}
+
+/// Returns next nonce: max(committed_nonce, cached_pending_nonce), then increments cache.
+fn get_and_bump_nonce(pending_nonces: &PendingNonces, consensus: &ConsensusEngine, addr: &str) -> u64 {
+    let committed = consensus.state.get_account(addr).map(|a| a.nonce).unwrap_or(0);
+    let mut entry = pending_nonces.entry(addr.to_string()).or_insert(committed);
+    let nonce = (*entry).max(committed);
+    *entry = nonce + 1;
+    nonce
+}
+
+fn sign_and_submit_with_nonce(
+    kp: &SigningKeyPair,
+    sender_addr: &str,
+    receiver: String,
+    amount: u64,
+    fee: u64,
+    nonce: u64,
+    consensus: &ConsensusEngine,
+) -> TxResponse {
+    let mut tx = Transaction {
+        sender: sender_addr.to_string(),
+        receiver: receiver.clone(),
+        amount,
+        fee,
+        nonce,
+        chain_id: CHAIN_ID,
+        read_set: vec![sender_addr.to_string(), receiver.clone()],
+        write_set: vec![sender_addr.to_string(), receiver],
+        data: vec![],
+        signature: vec![],
+        timestamp: now_secs(),
+    };
+    let msg = match postcard::to_allocvec(&tx) {
+        Ok(b) => b,
+        Err(e) => return TxResponse { accepted: false, message: format!("Serialize: {}", e), tx_hash: None },
+    };
+    let sig = match kp.sign(&msg) {
+        Ok(s) => s,
+        Err(e) => return TxResponse { accepted: false, message: format!("Sign: {:?}", e), tx_hash: None },
+    };
+    tx.signature = sig;
+    let tx_hash = hex::encode(blake3::hash(&msg).as_bytes());
+    consensus.mempool.add_transaction(tx);
+    TxResponse { accepted: true, message: "TX enviada al mempool".to_string(), tx_hash: Some(tx_hash) }
 }
 
 fn sign_and_submit(
@@ -745,17 +795,19 @@ async fn wallet_faucet(
         }));
     }
 
-    const MAX_FAUCET: u64 = 10_000_000_000; // máx 10,000 RF por solicitud (10B microRF)
-    const DEFAULT_FAUCET: u64 = 1_000_000_000; // 1,000 RF por defecto (1B microRF)
+    const MAX_FAUCET: u64 = 100_000_000_000_000; // máx 100,000 RF por solicitud
+    const DEFAULT_FAUCET: u64 = 1_000_000_000_000; // 1,000 RF por defecto
     let faucet_bal = state.consensus.state.get_balance(&state.faucet_address);
     if faucet_bal < MIN_FEE + 1 {
         return (StatusCode::SERVICE_UNAVAILABLE, Json(TxResponse { accepted: false, message: "Faucet vacío".into(), tx_hash: None }));
     }
     let amount = req.amount.unwrap_or(DEFAULT_FAUCET).min(MAX_FAUCET);
     if faucet_bal < amount + MIN_FEE {
-        return (StatusCode::BAD_REQUEST, Json(TxResponse { accepted: false, message: format!("Faucet solo tiene {} RF", faucet_bal), tx_hash: None }));
+        return (StatusCode::BAD_REQUEST, Json(TxResponse { accepted: false, message: format!("Faucet solo tiene {} RF", faucet_bal / 1_000_000), tx_hash: None }));
     }
-    let resp = sign_and_submit(&state.faucet_key, &state.faucet_address, req.address.clone(), amount, MIN_FEE, &state.consensus);
+    // Use pending nonce to avoid nonce conflicts when multiple faucet TXs are in-flight
+    let nonce = get_and_bump_nonce(&state.pending_nonces, &state.consensus, &state.faucet_address);
+    let resp = sign_and_submit_with_nonce(&state.faucet_key, &state.faucet_address, req.address.clone(), amount, MIN_FEE, nonce, &state.consensus);
     if resp.accepted {
         // Registrar cooldown SOLO si la TX fue aceptada
         state.faucet_cooldowns.insert(req.address.clone(), now);
@@ -1481,6 +1533,7 @@ pub async fn run_server(
         node_start_time,
         faucet_cooldowns: Arc::new(DashMap::new()),
         ip_rate_limits: Arc::new(DashMap::new()),
+        pending_nonces: Arc::new(DashMap::new()),
     };
     let app = create_router(state);
     let addr = std::net::SocketAddr::from(([0, 0, 0, 0], port));

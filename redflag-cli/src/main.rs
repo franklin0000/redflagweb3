@@ -35,13 +35,13 @@ enum Commands {
     /// Realiza una transferencia de RF
     Transfer {
         /// Dirección destino
-        #[arg(short, long)]
+        #[arg(long)]
         to: String,
         /// Cantidad en RF (no microRF)
-        #[arg(short, long)]
+        #[arg(long)]
         amount: f64,
         /// Ruta al archivo de llave privada
-        #[arg(short, long, default_value = "redflag.priv")]
+        #[arg(long, default_value = "redflag.priv")]
         key: String,
     },
 
@@ -51,31 +51,31 @@ enum Commands {
         #[arg(short, long)]
         address: Option<String>,
         /// Cantidad en RF (máx. 10,000 RF)
-        #[arg(short, long, default_value_t = 1000.0)]
+        #[arg(long, default_value_t = 1000.0)]
         amount: f64,
     },
 
     /// Stakea RF para convertirte en validador (mín. 10,000 RF)
     Stake {
         /// Cantidad en RF a stakear
-        #[arg(short, long)]
+        #[arg(long)]
         amount: f64,
         /// Ruta al archivo de llave privada
-        #[arg(short, long, default_value = "redflag.priv")]
+        #[arg(long, default_value = "redflag.priv")]
         key: String,
     },
 
     /// Inicia el proceso de unstaking (espera 10 rondas)
     Unstake {
         /// Ruta al archivo de llave privada
-        #[arg(short, long, default_value = "redflag.priv")]
+        #[arg(long, default_value = "redflag.priv")]
         key: String,
     },
 
     /// Retira RF después del período de unbonding (10 rondas)
     Withdraw {
         /// Ruta al archivo de llave privada
-        #[arg(short, long, default_value = "redflag.priv")]
+        #[arg(long, default_value = "redflag.priv")]
         key: String,
     },
 
@@ -89,16 +89,16 @@ enum Commands {
     /// Realiza un swap en el DEX AMM (x·y=k, 0.3% fee)
     DexSwap {
         /// ID del pool (ej: RF_wETH, RF_wBNB, RF_wMATIC)
-        #[arg(short, long)]
+        #[arg(long)]
         pool: String,
         /// Dirección del swap: "rf_to_b" o "b_to_rf"
-        #[arg(short, long)]
+        #[arg(long)]
         direction: String,
         /// Cantidad de entrada en RF (o tokens si direction=b_to_rf)
-        #[arg(short, long)]
+        #[arg(long)]
         amount: f64,
         /// Ruta al archivo de llave privada
-        #[arg(short, long, default_value = "redflag.priv")]
+        #[arg(long, default_value = "redflag.priv")]
         key: String,
     },
 
@@ -108,13 +108,13 @@ enum Commands {
     /// Cotización de swap sin ejecutar
     DexQuote {
         /// ID del pool
-        #[arg(short, long)]
+        #[arg(long)]
         pool: String,
         /// Dirección: "rf_to_b" o "b_to_rf"
-        #[arg(short, long)]
+        #[arg(long)]
         direction: String,
         /// Cantidad de entrada en RF
-        #[arg(short, long)]
+        #[arg(long)]
         amount: f64,
     },
 
@@ -127,7 +127,7 @@ enum Commands {
         #[arg(short, long)]
         address: Option<String>,
         /// Número máximo de transacciones a mostrar
-        #[arg(short, long, default_value_t = 10)]
+        #[arg(long, default_value_t = 10)]
         limit: usize,
     },
 }

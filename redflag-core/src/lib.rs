@@ -89,18 +89,31 @@ impl Transaction {
             || other.write_set.iter().any(|w| self.write_set.contains(w))
     }
 
-    /// Agrupa transacciones en batches no-conflictivos para ejecución paralela
+    /// Agrupa transacciones para ejecución paralela.
+    /// TXs NO conflictivas van a grupos distintos (se ejecutan en paralelo).
+    /// TXs conflictivas (mismo sender o receiver) van al MISMO grupo (se ejecutan secuencialmente).
     pub fn parallel_groups(txs: Vec<Transaction>) -> Vec<Vec<Transaction>> {
         let mut groups: Vec<Vec<Transaction>> = Vec::new();
 
         for tx in txs {
-            let slot = groups.iter().position(|group| {
-                !group.iter().any(|existing| existing.conflicts_with(&tx))
+            // Buscar un grupo donde alguna TX ya conflicte con la actual
+            // → ejecutar juntas secuencialmente (garantiza orden de nonces)
+            let conflict_slot = groups.iter().position(|group| {
+                group.iter().any(|existing| existing.conflicts_with(&tx))
             });
 
-            match slot {
-                Some(i) => groups[i].push(tx),
-                None => groups.push(vec![tx]),
+            match conflict_slot {
+                Some(i) => groups[i].push(tx), // Mismo grupo → ejecución secuencial
+                None => {
+                    // Buscar grupo completamente independiente para ejecutar en paralelo
+                    let parallel_slot = groups.iter().position(|group| {
+                        !group.iter().any(|existing| existing.conflicts_with(&tx))
+                    });
+                    match parallel_slot {
+                        Some(i) => groups[i].push(tx),
+                        None    => groups.push(vec![tx]),
+                    }
+                }
             }
         }
 

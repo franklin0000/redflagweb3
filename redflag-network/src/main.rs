@@ -55,7 +55,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
     let state_db_path = env::var("STATE_DB_PATH")
         .unwrap_or_else(|_| format!("{}/state", data_dir));
     let state_db = Arc::new(StateDB::new(&state_db_path)?);
-    state_db.ensure_faucet(&faucet_address, 500_000_000)?;
+    state_db.ensure_faucet(&faucet_address, 500_000_000_000_000)?; // 500M RF para testnet
     println!("💾 Estado: {}", state_db_path);
 
     // ── 4. WebSocket broadcast channel ──────────────────────────────────────

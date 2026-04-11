@@ -84,7 +84,7 @@ function LockScreen({onUnlock}) {
     <div className="lock-sc">
       <div className="card lock-card fi">
         <div style={{textAlign:'center',marginBottom:32}}>
-          <img src="/logo.png" alt="RedFlag" style={{width:72,height:72,borderRadius:12,objectFit:'contain',margin:'0 auto 14px',display:'block'}}/>
+          <img src="./logo.png" alt="RedFlag" style={{width:72,height:72,borderRadius:12,objectFit:'contain',margin:'0 auto 14px',display:'block'}}/>
           <h1 style={{fontFamily:'var(--acc)',fontSize:24,marginBottom:6}}>redflag.web3</h1>
           <p style={{color:'var(--txm)',fontSize:13}}>Enter your password to unlock</p>
         </div>
@@ -256,7 +256,7 @@ function WalletPage({wallet,wsData}) {
       const r = await sdk.walletSend(wallet.private_key_hex, send.to, parseInt(send.amount), parseInt(send.fee)||1);
       setResult({ok:r.accepted, msg:r.message, hash:r.tx_hash});
       if(r.accepted){ setSend({to:'',amount:'',fee:'1'}); setTimeout(refresh,2000); }
-    } catch(e){ setResult({ok:r?.message||e.message}); const r=undefined; setResult({ok:false,msg:e.response?.data?.message||e.message}); }
+    } catch(e){ setResult({ok:false, msg:e.response?.data?.message||e.message}); }
     finally { setLoading(false); }
   };
 
@@ -522,13 +522,21 @@ function DashboardPage({stats,vertices,mempool,roundEk,tpsHist,online}) {
 // ─────────────────────────────────────────────
 // EXPLORER PAGE
 // ─────────────────────────────────────────────
-function ExplorerPage() {
-  const [q,setQ] = useState('');
+function ExplorerPage({initialQuery=''}) {
+  const [q,setQ] = useState(initialQuery);
   const [result,setResult] = useState(null);
   const [loading,setLoading] = useState(false);
   const [vertices,setVertices] = useState([]);
 
   useEffect(()=>{ sdk.getVertices().then(setVertices).catch(()=>{}); },[]);
+  useEffect(()=>{
+    if(!initialQuery) return;
+    setLoading(true); setResult(null);
+    sdk.search(initialQuery.trim())
+      .then(r=>setResult(r))
+      .catch(ex=>setResult({type:'error',msg:ex.message}))
+      .finally(()=>setLoading(false));
+  },[initialQuery]);
 
   const search = async(e)=>{
     e.preventDefault(); if(!q.trim()) return;
@@ -1511,6 +1519,8 @@ export default function App() {
   const [pendingBadge,setPending] = useState(0);
   const [wsData,setWsData]   = useState(null);
   const [search,setSearch]   = useState('');
+  const [searchQuery,setSearchQuery] = useState('');
+  const [sidebarOpen,setSidebarOpen] = useState(false);
   const prevTx = useRef(0);
 
   const ks = hasKeystore();
@@ -1549,26 +1559,31 @@ export default function App() {
   // Search redirect
   const handleSearch = e=>{
     e.preventDefault();
-    if(search.trim()){ setPage('explorer'); }
+    if(search.trim()){ setSearchQuery(search.trim()); setPage('explorer'); }
   };
 
   if(!ks && !wallet)        return <Onboarding onComplete={w=>{ setWallet(w); setPage('wallet'); }}/>;
   if(ks  && !wallet)        return <LockScreen onUnlock={w=>{ setWallet(w); setPage('wallet'); }}/>;
 
-  const pageTitles = {wallet:'My Wallet',dashboard:'Dashboard',staking:'Staking',dex:'DEX Trading',explorer:'Block Explorer',network:'Network Info',settings:'Settings'};
+  const pageTitles = {wallet:'My Wallet',dashboard:'Dashboard',staking:'Staking',bridge:'Bridge',dex:'DEX Trading',explorer:'Block Explorer',network:'Network Info',settings:'Settings'};
+
+  const navTo = id => { setPage(id); setSidebarOpen(false); };
 
   return (
     <div className="shell">
+      {/* MOBILE OVERLAY */}
+      <div className={`sidebar-overlay ${sidebarOpen?'open':''}`} onClick={()=>setSidebarOpen(false)}/>
+
       {/* SIDEBAR */}
-      <aside className="sidebar">
+      <aside className={`sidebar ${sidebarOpen?'open':''}`}>
         <div className="sb-logo">
-          <img src="/logo.png" alt="RF" style={{width:28,height:28,borderRadius:6,objectFit:'contain'}}/>
+          <img src="./logo.png" alt="RF" style={{width:28,height:28,borderRadius:6,objectFit:'contain'}}/>
           redflag<span style={{fontWeight:300,opacity:.6}}>.web3</span>
         </div>
         <nav className="sb-nav">
           <div className="nav-lbl">Main</div>
           {PAGES.map(p=>(
-            <div key={p.id} className={`nav-item ${page===p.id?'on':''}`} onClick={()=>setPage(p.id)}>
+            <div key={p.id} className={`nav-item ${page===p.id?'on':''}`} onClick={()=>navTo(p.id)}>
               <p.icon size={17}/>
               {p.label}
               {p.id==='wallet' && pendingBadge>0 && <span className="nav-badge">{pendingBadge}</span>}
@@ -1586,11 +1601,14 @@ export default function App() {
       {/* MAIN */}
       <div className="main">
         <div className="topbar">
+          <button className="menu-toggle ibtn" onClick={()=>setSidebarOpen(o=>!o)} title="Menu">
+            <Globe size={17}/>
+          </button>
           <div className="topbar-ttl">{pageTitles[page]||page}</div>
           <form className="sw" onSubmit={handleSearch}>
             <Search size={14} className="si-ico"/>
             <input className="si" placeholder="Search address, tx, vertex…" value={search} onChange={e=>setSearch(e.target.value)}
-              onKeyDown={e=>{ if(e.key==='Enter'){ setPage('explorer'); } }}/>
+              onKeyDown={e=>{ if(e.key==='Enter'){ setSearchQuery(search.trim()); setPage('explorer'); } }}/>
           </form>
           <div className="tb-right">
             <div style={{display:'flex',alignItems:'center',gap:7,fontSize:12,color:online?'var(--green)':'var(--txl)'}}>
@@ -1607,7 +1625,7 @@ export default function App() {
           {page==='staking'   && <StakingPage   wallet={wallet}/>}
           {page==='bridge'    && <BridgePage    wallet={wallet}/>}
           {page==='dex'       && <DexPage       wallet={wallet}/>}
-          {page==='explorer'  && <ExplorerPage/>}
+          {page==='explorer'  && <ExplorerPage  initialQuery={searchQuery}/>}
           {page==='network'   && <NetworkPage   stats={stats} online={online}/>}
           {page==='settings'  && <SettingsPage  wallet={wallet} onLogout={()=>{ setWallet(null); }}/>}
         </div>

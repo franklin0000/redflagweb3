@@ -527,10 +527,20 @@ function ExplorerPage({initialQuery=''}) {
   const [result,setResult] = useState(null);
   const [loading,setLoading] = useState(false);
   const [vertices,setVertices] = useState([]);
+  const [selectedVertex,setSelectedVertex] = useState(null);
+  const [tab,setTab] = useState('blocks'); // 'blocks' | 'search'
 
-  useEffect(()=>{ sdk.getVertices().then(setVertices).catch(()=>{}); },[]);
+  // Actualización en tiempo real de vértices
+  useEffect(()=>{
+    const load = ()=>sdk.getVertices().then(v=>setVertices(v||[])).catch(()=>{});
+    load();
+    const id = setInterval(load, 4000);
+    return ()=>clearInterval(id);
+  },[]);
+
   useEffect(()=>{
     if(!initialQuery) return;
+    setTab('search');
     setLoading(true); setResult(null);
     sdk.search(initialQuery.trim())
       .then(r=>setResult(r))
@@ -540,22 +550,55 @@ function ExplorerPage({initialQuery=''}) {
 
   const search = async(e)=>{
     e.preventDefault(); if(!q.trim()) return;
+    setTab('search');
     setLoading(true); setResult(null);
     try { const r = await sdk.search(q.trim()); setResult(r); }
     catch(ex){ setResult({type:'error',msg:ex.message}); }
     finally { setLoading(false); }
   };
 
+  const openVertex = (v)=>{
+    setSelectedVertex(v);
+    setTab('search');
+    setQ(v.id);
+    setResult({
+      type:'vertex',
+      id: v.id,
+      round: v.round,
+      author: v.author,
+      tx_count: v.tx_count,
+      etx_count: v.etx_count||0,
+      committed: v.committed,
+      transactions: v.transactions||[],
+    });
+  };
+
+  const tabStyle = (t)=>({
+    padding:'8px 18px', cursor:'pointer', fontSize:13, fontWeight:600,
+    borderBottom: tab===t ? '2px solid var(--cyan)' : '2px solid transparent',
+    color: tab===t ? 'var(--cyan)' : 'var(--txm)',
+    background:'none', border:'none', borderBottomWidth:2,
+    borderBottomStyle:'solid',
+  });
+
   return (
     <div>
-      <form onSubmit={search} style={{display:'flex',gap:12,marginBottom:24}}>
-        <input className="inp" placeholder="Search by address, vertex ID or tx hash…" value={q} onChange={e=>setQ(e.target.value)} style={{flex:1}}/>
+      {/* Search bar */}
+      <form onSubmit={search} style={{display:'flex',gap:12,marginBottom:16}}>
+        <input className="inp" placeholder="Search address, vertex ID or tx hash…" value={q} onChange={e=>setQ(e.target.value)} style={{flex:1}}/>
         <button type="submit" className="btn btn-p" disabled={loading||!q.trim()}>
           {loading ? <span className="spin"><RefreshCw size={14}/></span> : <Search size={14}/>} Search
         </button>
       </form>
 
-      {result && (
+      {/* Tabs */}
+      <div style={{display:'flex',borderBottom:'1px solid var(--border)',marginBottom:20}}>
+        <button style={tabStyle('blocks')} onClick={()=>setTab('blocks')}>Live Blocks</button>
+        <button style={tabStyle('search')} onClick={()=>setTab('search')}>Search Results</button>
+      </div>
+
+      {/* Search results tab */}
+      {tab==='search' && result && (
         <div className="card fi" style={{marginBottom:24}}>
           {result.type==='address' && (
             <div>
@@ -578,8 +621,8 @@ function ExplorerPage({initialQuery=''}) {
                     <tbody>
                       {result.history.map((tx,i)=>(
                         <tr key={i}>
-                          <td className="mono">{short(tx.sender,14)}</td>
-                          <td className="mono">{short(tx.receiver,14)}</td>
+                          <td className="mono" style={{cursor:'pointer',color:'var(--cyan)'}} onClick={()=>{setQ(tx.sender);search({preventDefault:()=>{}})}}>{short(tx.sender,14)}</td>
+                          <td className="mono" style={{cursor:'pointer',color:'var(--cyan)'}} onClick={()=>{setQ(tx.receiver);search({preventDefault:()=>{}})}}>{short(tx.receiver,14)}</td>
                           <td className="bold">{fmtN(tx.amount)} RF</td>
                           <td style={{color:'var(--txl)'}}>{tx.fee}</td>
                           <td style={{color:'var(--txl)',fontSize:11}}>{fmtDate(tx.timestamp)}</td>
@@ -595,7 +638,7 @@ function ExplorerPage({initialQuery=''}) {
             <div>
               <div style={{display:'flex',alignItems:'center',gap:10,marginBottom:16}}>
                 <Database size={18} color="var(--purple)"/>
-                <span style={{fontFamily:'var(--acc)',fontWeight:700,fontSize:16}}>DAG Vertex</span>
+                <span style={{fontFamily:'var(--acc)',fontWeight:700,fontSize:16}}>DAG Block</span>
                 {result.committed ? <Chip color="g">Committed</Chip> : <Chip color="x">Pending</Chip>}
               </div>
               {[['ID',result.id],['Round',result.round],['Author',result.author],['Transactions',result.tx_count],['Encrypted TXs',result.etx_count]].map(([k,v])=>(
@@ -604,36 +647,64 @@ function ExplorerPage({initialQuery=''}) {
                   <span style={{fontFamily:['ID','Author'].includes(k)?'var(--mono)':'inherit',fontSize:['ID','Author'].includes(k)?11:13,color:'var(--txt)',fontWeight:600,wordBreak:'break-all',maxWidth:'65%',textAlign:'right'}}>{String(v)}</span>
                 </div>
               ))}
+              {result.transactions?.length>0 && (
+                <div style={{marginTop:16}}>
+                  <div style={{fontWeight:700,marginBottom:10,fontSize:13,color:'var(--txm)'}}>Transactions in this block</div>
+                  <table className="tbl">
+                    <thead><tr><th>Sender</th><th>Receiver</th><th>Amount</th><th>Fee</th></tr></thead>
+                    <tbody>
+                      {result.transactions.map((tx,i)=>(
+                        <tr key={i}>
+                          <td className="mono">{short(tx.sender||'',14)}</td>
+                          <td className="mono">{short(tx.receiver||'',14)}</td>
+                          <td className="bold">{fmtN(tx.amount||0)} RF</td>
+                          <td style={{color:'var(--txl)'}}>{tx.fee||0}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
             </div>
           )}
           {result.type==='not_found' && <Alert type="wrn">No results for: <b>{result.query||result.hash}</b></Alert>}
           {result.type==='error'     && <Alert type="err">{result.msg}</Alert>}
         </div>
       )}
+      {tab==='search' && !result && !loading && (
+        <div style={{textAlign:'center',color:'var(--txl)',padding:40}}>Enter an address, vertex ID or tx hash to search</div>
+      )}
 
-      {/* All vertices */}
-      <div className="card np">
-        <div style={{padding:'16px 18px 0'}}>
-          <SectionHdr icon={Globe} title="Recent Vertices" color="var(--cyan)"/>
+      {/* Live blocks tab */}
+      {tab==='blocks' && (
+        <div className="card np">
+          <div style={{padding:'16px 18px 10px',display:'flex',alignItems:'center',justifyContent:'space-between'}}>
+            <SectionHdr icon={Database} title="Live Block Feed" color="var(--cyan)"/>
+            <span style={{fontSize:11,color:'var(--txl)'}}>auto-refresh 4s</span>
+          </div>
+          <div style={{overflowX:'auto'}}>
+            <table className="tbl">
+              <thead><tr><th>Round</th><th>Vertex ID</th><th>Author</th><th>TXs</th><th>Status</th></tr></thead>
+              <tbody>
+                {vertices.slice().sort((a,b)=>b.round-a.round).map(v=>(
+                  <tr key={v.id} style={{cursor:'pointer'}} onClick={()=>openVertex(v)}>
+                    <td className="bold" style={{color:'var(--cyan)'}}>{v.round}</td>
+                    <td className="mono" title={v.id}>0x{v.id.slice(0,16)}…</td>
+                    <td className="mono">{v.author ? v.author.slice(0,14)+'…' : '—'}</td>
+                    <td>
+                      <span style={{background:'var(--purple)',color:'#fff',borderRadius:4,padding:'2px 7px',fontSize:11,fontWeight:700}}>
+                        {v.tx_count}
+                      </span>
+                    </td>
+                    <td>{v.committed ? <Chip color="g">✓ Committed</Chip> : <Chip color="x">⏳ Pending</Chip>}</td>
+                  </tr>
+                ))}
+                {vertices.length===0 && <tr><td colSpan={5} style={{textAlign:'center',color:'var(--txl)',padding:32}}>Waiting for blocks…</td></tr>}
+              </tbody>
+            </table>
+          </div>
         </div>
-        <div style={{overflowX:'auto'}}>
-          <table className="tbl">
-            <thead><tr><th>Vertex ID</th><th>Round</th><th>Author</th><th>TXs</th><th>Status</th></tr></thead>
-            <tbody>
-              {vertices.map(v=>(
-                <tr key={v.id} style={{cursor:'pointer'}} onClick={()=>setQ(v.id)}>
-                  <td className="mono" style={{color:'var(--cyan)'}} title={v.id}>0x{v.id.slice(0,18)}…</td>
-                  <td className="bold">{v.round}</td>
-                  <td className="mono">{v.author.slice(0,14)}…</td>
-                  <td>{v.tx_count}</td>
-                  <td>{v.committed ? <Chip color="g">✓</Chip> : <Chip color="x">⏳</Chip>}</td>
-                </tr>
-              ))}
-              {vertices.length===0 && <tr><td colSpan={5} style={{textAlign:'center',color:'var(--txl)',padding:24}}>No vertices yet</td></tr>}
-            </tbody>
-          </table>
-        </div>
-      </div>
+      )}
     </div>
   );
 }

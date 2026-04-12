@@ -39,7 +39,10 @@ pub struct ExecutionResult {
     pub gas_used: u64,
     pub return_value: Vec<u8>,
     pub logs: Vec<String>,
-    pub storage_writes: Vec<(Vec<u8>, Vec<u8>)>, // (key, value) pairs escritos
+    pub events: Vec<ContractEvent>,
+    pub storage_writes: Vec<(Vec<u8>, Vec<u8>)>,
+    /// Transferencias RF a aplicar: (to, amount) desde el contrato
+    pub pending_transfers: Vec<(String, u64)>,
 }
 
 /// Contrato desplegado en la blockchain
@@ -69,6 +72,15 @@ pub struct AbiFunction {
     pub mutates_state: bool,
 }
 
+/// Evento emitido por un contrato
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct ContractEvent {
+    pub contract: String,
+    pub name: String,
+    pub data: Vec<u8>,
+    pub round: u64,
+}
+
 /// Contexto de ejecución pasado a las host functions
 #[derive(Clone)]
 pub struct ExecutionContext {
@@ -78,9 +90,16 @@ pub struct ExecutionContext {
     pub gas_limit: u64,
     pub gas_used: u64,
     pub logs: Vec<String>,
+    pub events: Vec<ContractEvent>,
     pub storage_writes: Vec<(Vec<u8>, Vec<u8>)>,
+    /// Transferencias RF pendientes: (to, amount) — desde el contrato
+    pub pending_transfers: Vec<(String, u64)>,
+    /// Balance snapshot del contrato al inicio (para rf_transfer)
+    pub contract_balance: u64,
     /// Storage del contrato (prefijado por address)
     pub storage: Arc<Db>,
+    /// Función para leer balances de cualquier dirección
+    pub get_balance: Arc<dyn Fn(&str) -> u64 + Send + Sync>,
 }
 
 impl ExecutionContext {
@@ -173,6 +192,7 @@ impl ContractVm {
         caller: &str,
         block_round: u64,
         gas_limit: u64,
+        get_balance: Arc<dyn Fn(&str) -> u64 + Send + Sync>,
     ) -> Result<ExecutionResult, VmError> {
         // Cargar contrato
         let contract = self.load_contract(contract_address)?;
@@ -180,6 +200,8 @@ impl ContractVm {
         // Compilar módulo WASM
         let module = Module::new(&self.engine, &contract.bytecode[..])
             .map_err(|e| VmError::CompileError(e.to_string()))?;
+
+        let contract_balance = get_balance(contract_address);
 
         // Contexto de ejecución
         let ctx = ExecutionContext {
@@ -189,8 +211,12 @@ impl ContractVm {
             gas_limit,
             gas_used: 0,
             logs: Vec::new(),
+            events: Vec::new(),
             storage_writes: Vec::new(),
+            pending_transfers: Vec::new(),
+            contract_balance,
             storage: Arc::new(self.contract_db.clone()),
+            get_balance,
         };
 
         // Linker con host functions
@@ -228,7 +254,9 @@ impl ContractVm {
             gas_used: ctx.gas_used,
             return_value,
             logs: ctx.logs,
+            events: ctx.events,
             storage_writes: ctx.storage_writes,
+            pending_transfers: ctx.pending_transfers,
         })
     }
 
@@ -245,7 +273,8 @@ impl ContractVm {
             args,
             "query_caller",
             0,
-            1_000_000, // Gas alto para queries
+            1_000_000,
+            Arc::new(|_| 0u64), // queries no necesitan balances reales
         )?;
         Ok(result.return_value)
     }

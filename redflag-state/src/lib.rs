@@ -1,5 +1,6 @@
 use serde::{Serialize, Deserialize};
 use sled::{Db, Tree};
+use std::sync::Arc;
 use redflag_core::{Transaction, CHAIN_ID, GENESIS_ADDRESS, FEE_POOL_ADDRESS, GENESIS_BALANCE};
 use redflag_crypto::Verifier;
 use rayon::prelude::*;
@@ -246,7 +247,27 @@ impl StateDB {
                     let _ = vm.deploy(tx.data.clone(), &tx.sender, tx.nonce, 0, vec![], abi);
                 }
             } else if !tx.data.is_empty() {
-                let _ = vm.call(&tx.receiver, "main", tx.data.clone(), &tx.sender, 0, 1_000_000);
+                let state_ref = Arc::new(self.db.clone());
+                let get_balance: Arc<dyn Fn(&str) -> u64 + Send + Sync> = Arc::new(move |addr: &str| {
+                    state_ref.get(addr).ok().flatten()
+                        .and_then(|b| postcard::from_bytes::<Account>(&b).ok())
+                        .map(|a| a.balance)
+                        .unwrap_or(0)
+                });
+                if let Ok(result) = vm.call(&tx.receiver, "main", tx.data.clone(), &tx.sender, 0, 1_000_000, get_balance) {
+                    // Aplicar transferencias RF emitidas por el contrato
+                    for (to, amount) in result.pending_transfers {
+                        if let Some(mut contract_acc) = self.get_account(&tx.receiver) {
+                            if contract_acc.balance >= amount {
+                                contract_acc.balance -= amount;
+                                let _ = self.save_account(&contract_acc);
+                                let mut to_acc = self.get_account(&to).unwrap_or(Account { address: to.clone(), balance: 0, nonce: 0 });
+                                to_acc.balance = to_acc.balance.saturating_add(amount);
+                                let _ = self.save_account(&to_acc);
+                            }
+                        }
+                    }
+                }
             }
         }
 

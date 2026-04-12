@@ -9,6 +9,24 @@ pub mod threshold;
 use std::collections::HashSet;
 use sled::{Db, Tree};
 
+/// Cada cuántas rondas se reduce a la mitad la recompensa por vértice
+pub const HALVING_INTERVAL: u64 = 1_000;
+/// Recompensa base por vértice (1 RF = 1_000_000 microRF)
+pub const BASE_REWARD: u64 = 1_000_000;
+/// Recompensa adicional por cada TX incluida en el vértice
+pub const TX_REWARD: u64 = 100_000;
+/// Porcentaje de fees que se quema (deflación): 20%
+pub const FEE_BURN_PERCENT: u64 = 20;
+
+/// Calcula la recompensa por vértice con halving
+fn vertex_reward(round: u64, tx_count: usize) -> u64 {
+    let halvings = (round / HALVING_INTERVAL).min(10); // máx 10 halvings
+    let divisor = 1u64 << halvings;
+    let base = BASE_REWARD / divisor;
+    let per_tx = TX_REWARD / divisor;
+    base + (tx_count as u64 * per_tx)
+}
+
 pub type VertexId = [u8; 32];
 pub type Round = u64;
 
@@ -369,13 +387,16 @@ impl ConsensusEngine {
         total_order
     }
 
-    /// Distribuye el fee pool proporcionalmente entre validadores activos con stake
+    /// Distribuye el fee pool entre validadores activos (quema 20%, distribuye 80%)
     fn distribute_fees_round(&self) {
         let fee_pool = self.state.get_balance(redflag_core::FEE_POOL_ADDRESS);
         if fee_pool == 0 { return; }
 
-        let rewards = self.state.staking.distribute_fees(fee_pool);
-        if rewards.is_empty() { return; }
+        // Quemar FEE_BURN_PERCENT% — deflación controlada
+        let burn_amount = fee_pool * FEE_BURN_PERCENT / 100;
+        let distributable = fee_pool.saturating_sub(burn_amount);
+
+        let rewards = self.state.staking.distribute_fees(distributable);
 
         for (address, amount) in &rewards {
             let mut acc = self.state.get_account(address).unwrap_or(redflag_state::Account {
@@ -387,14 +408,19 @@ impl ConsensusEngine {
             let _ = self.state.save_account_pub(&acc);
         }
 
-        // Vaciar el fee pool tras distribución
+        // Vaciar fee pool (el burn_amount simplemente desaparece — supply se reduce)
         let _ = self.state.save_account_pub(&redflag_state::Account {
             address: redflag_core::FEE_POOL_ADDRESS.into(),
             balance: 0,
             nonce: 0,
         });
 
-        println!("💰 Fees distribuidos: {} RF → {} validadores", fee_pool, rewards.len());
+        if !rewards.is_empty() {
+            println!("💰 Fees: {} RF quemados + {} RF → {} validadores",
+                burn_amount, distributable, rewards.len());
+        } else if fee_pool > 0 {
+            println!("🔥 {} RF quemados (sin validadores activos)", burn_amount);
+        }
     }
 
     fn commit_vertex_recursive(&self, vertex_id: &VertexId) -> Vec<Transaction> {
@@ -447,9 +473,8 @@ impl ConsensusEngine {
                     eprintln!("❌ Error aplicando transacciones: {}", e);
                 }
 
-                // ── Recompensa al autor del vértice ───────────────────────────
-                // 1 RF base + 0.1 RF por TX incluida
-                let reward: u64 = 1_000_000 + (all_txs.len() as u64 * 100_000);
+                // ── Recompensa al autor del vértice (con halving) ─────────────
+                let reward: u64 = vertex_reward(v.round, all_txs.len());
                 let author_hex = hex::encode(&v.author);
                 if let Some(mut acc) = self.state.get_account(&author_hex) {
                     acc.balance = acc.balance.saturating_add(reward);

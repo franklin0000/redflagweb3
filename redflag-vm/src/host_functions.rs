@@ -99,5 +99,67 @@ pub fn build_linker(engine: &Engine) -> Result<Linker<ExecutionContext>, wasmi::
         ctx.gas_limit.saturating_sub(ctx.gas_used) as i64
     })?;
 
+    // ── rf_balance_of(addr_ptr, addr_len) → i64 ─────────────────────────────
+    // Devuelve el balance RF de cualquier dirección (en microRF)
+    linker.func_wrap("env", "rf_balance_of", |mut caller: wasmi::Caller<ExecutionContext>, addr_ptr: i32, addr_len: i32| -> i64 {
+        let _ = caller.data_mut().charge_gas(200);
+        if let Some(memory) = caller.get_export("memory").and_then(|e| e.into_memory()) {
+            let mut buf = vec![0u8; addr_len as usize];
+            if memory.read(&caller, addr_ptr as usize, &mut buf).is_ok() {
+                if let Ok(addr) = std::str::from_utf8(&buf) {
+                    return (caller.data().get_balance)(addr.trim()) as i64;
+                }
+            }
+        }
+        -1
+    })?;
+
+    // ── rf_transfer(to_ptr, to_len, amount: i64) → i32 ──────────────────────
+    // Transfiere RF desde el contrato a una dirección. Devuelve 0=ok, 1=error.
+    linker.func_wrap("env", "rf_transfer", |mut caller: wasmi::Caller<ExecutionContext>, to_ptr: i32, to_len: i32, amount: i64| -> i32 {
+        let _ = caller.data_mut().charge_gas(5_000);
+        if amount <= 0 { return 1; }
+        let amount = amount as u64;
+
+        // Verificar que el contrato tiene suficiente balance (descontando transferencias previas)
+        let already_sent: u64 = caller.data().pending_transfers.iter().map(|(_, a)| a).sum();
+        let available = caller.data().contract_balance.saturating_sub(already_sent);
+        if amount > available { return 2; } // insuficiente
+
+        if let Some(memory) = caller.get_export("memory").and_then(|e| e.into_memory()) {
+            let mut buf = vec![0u8; to_len as usize];
+            if memory.read(&caller, to_ptr as usize, &mut buf).is_ok() {
+                if let Ok(to) = std::str::from_utf8(&buf) {
+                    caller.data_mut().pending_transfers.push((to.trim().to_string(), amount));
+                    return 0; // ok
+                }
+            }
+        }
+        1
+    })?;
+
+    // ── rf_emit_event(name_ptr, name_len, data_ptr, data_len) ────────────────
+    // Emite un evento nombrado con datos binarios (indexable off-chain)
+    linker.func_wrap("env", "rf_emit_event", |mut caller: wasmi::Caller<ExecutionContext>, np: i32, nl: i32, dp: i32, dl: i32| {
+        let _ = caller.data_mut().charge_gas(gas_costs::LOG * 2);
+        if let Some(memory) = caller.get_export("memory").and_then(|e| e.into_memory()) {
+            let mut name_buf = vec![0u8; nl as usize];
+            let mut data_buf = vec![0u8; dl as usize];
+            if memory.read(&caller, np as usize, &mut name_buf).is_ok()
+                && memory.read(&caller, dp as usize, &mut data_buf).is_ok()
+            {
+                if let Ok(name) = std::str::from_utf8(&name_buf) {
+                    let event = crate::ContractEvent {
+                        contract: caller.data().contract_address.clone(),
+                        name: name.to_string(),
+                        data: data_buf,
+                        round: caller.data().block_round,
+                    };
+                    caller.data_mut().events.push(event);
+                }
+            }
+        }
+    })?;
+
     Ok(linker)
 }

@@ -1998,6 +1998,20 @@ function DocsPage() {
             <p style={{color:'var(--txm)',lineHeight:1.7,marginBottom:12}}>
               RedFlag is a post-quantum blockchain using <b style={{color:'var(--fg)'}}>ML-DSA-65</b> signatures and <b style={{color:'var(--fg)'}}>ML-KEM-768</b> encryption — resistant to quantum computing attacks. It uses <b style={{color:'var(--fg)'}}>Bullshark DAG</b> BFT consensus for fast finality.
             </p>
+            <div style={{display:'flex',gap:10,marginBottom:14,flexWrap:'wrap'}}>
+              {[
+                {label:'𝕏 Twitter',  href:'https://x.com/franff546758',          color:'var(--fg)'},
+                {label:'Telegram',   href:'https://t.me/redflag21blockchain',      color:'var(--cyan)'},
+                {label:'GitHub',     href:'https://github.com/franklin0000/redflagweb3', color:'var(--txm)'},
+              ].map(l=>(
+                <a key={l.label} href={l.href} target="_blank" rel="noreferrer"
+                  style={{display:'inline-flex',alignItems:'center',gap:6,padding:'6px 12px',
+                    borderRadius:20,background:'var(--bg)',border:'1px solid var(--bdr)',
+                    color:l.color,fontSize:12,textDecoration:'none',fontWeight:600}}>
+                  {l.label}
+                </a>
+              ))}
+            </div>
             <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(160px,1fr))',gap:10,marginTop:8}}>
               {[
                 {label:'Chain ID',     value:'2100'},
@@ -2153,7 +2167,9 @@ function DocsPage() {
               <div><b style={{color:'var(--fg)'}}>Supply cap:</b> Max 1 quadrillion units per token to prevent overflow exploits.</div>
               <div><b style={{color:'var(--fg)'}}>Nonce protection:</b> Replay attacks prevented by strict nonce ordering.</div>
               <div style={{padding:'10px 14px',background:'var(--cyan)10',borderRadius:8,border:'1px solid var(--cyan)30',marginTop:4}}>
-                Found a vulnerability? Report responsibly — join our community channel.
+                Found a vulnerability? Report responsibly —{' '}
+                <a href="https://t.me/redflag21blockchain" target="_blank" rel="noreferrer"
+                  style={{color:'var(--cyan)',fontWeight:600}}>join our Telegram</a> or open a GitHub issue.
               </div>
             </div>
           </div>
@@ -2292,6 +2308,16 @@ export default function App() {
           ))}
         </nav>
         <div className="sb-foot">
+          <div style={{display:'flex',gap:8,justifyContent:'center',marginBottom:8}}>
+            <a href="https://x.com/franff546758" target="_blank" rel="noreferrer"
+              title="Twitter / X" style={{color:'var(--txl)',fontSize:11,textDecoration:'none'}}>𝕏</a>
+            <span style={{color:'var(--bdr)'}}>·</span>
+            <a href="https://t.me/redflag21blockchain" target="_blank" rel="noreferrer"
+              title="Telegram" style={{color:'var(--txl)',fontSize:11,textDecoration:'none'}}>Telegram</a>
+            <span style={{color:'var(--bdr)'}}>·</span>
+            <a href="https://github.com/franklin0000/redflagweb3" target="_blank" rel="noreferrer"
+              title="GitHub" style={{color:'var(--txl)',fontSize:11,textDecoration:'none'}}>GitHub</a>
+          </div>
           <div className="node-pill">
             <div className={`ldot ${online?'on':'off'}`}/>
             <span className="node-pill-txt">{stats?.node?.peer_id ? short(stats.node.peer_id,12) : 'connecting…'}</span>

@@ -87,6 +87,8 @@ RF_wBTC, RF_wUSDC, RF_wUSDT) are always returned.
 
 | Platform | URL |
 |----------|-----|
+| Twitter / X | https://x.com/franff546758 |
+| Telegram | https://t.me/redflag21blockchain |
 | GitHub | https://github.com/franklin0000/redflagweb3 |
 | Website | https://redflagweb3-app.onrender.com |
 | Node installer | `curl -sSf https://redflagweb3-node1.onrender.com/install.sh | bash` |

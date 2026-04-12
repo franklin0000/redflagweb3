@@ -46,6 +46,8 @@ pub struct ApiState {
     pub ip_rate_limits: IpRateLimits,
     /// Pending nonce cache — tracks ahead of committed state to avoid nonce conflicts
     pub pending_nonces: PendingNonces,
+    /// Listen multiaddrs (updated as the swarm binds ports)
+    pub listen_addrs: Arc<std::sync::RwLock<Vec<String>>>,
 }
 
 // ── Tipos de respuesta ───────────────────────────────────────────────────────
@@ -183,6 +185,8 @@ pub fn create_router(state: ApiState) -> Router {
         .route("/bridge/info",            get(bridge_info))
         .route("/bridge/chains",          get(bridge_chains))
         .route("/bridge/pubkey",          get(bridge_pubkey))
+        // Dirección de escucha P2P — para bootstrap interno entre nodos
+        .route("/network/addrs",          get(network_addrs))
         // Sincronización de estado entre nodos
         .route("/sync/state",             get(sync_state))
         // Market data (CoinGecko / CMC compatible)
@@ -428,6 +432,12 @@ async fn get_metrics(State(state): State<ApiState>) -> (HeaderMap, String) {
     let mut headers = HeaderMap::new();
     headers.insert("content-type", HeaderValue::from_static("text/plain; version=0.0.4; charset=utf-8"));
     (headers, body)
+}
+
+// ── Network Listen Addresses (for internal bootstrap between nodes) ──────────
+async fn network_addrs(State(state): State<ApiState>) -> Json<serde_json::Value> {
+    let addrs = state.listen_addrs.read().unwrap().clone();
+    Json(serde_json::json!({ "peer_id": state.peer_id, "addrs": addrs }))
 }
 
 // ── Network Stats ────────────────────────────────────────────────────────────
@@ -1670,6 +1680,7 @@ pub async fn run_server(
     faucet_address: String,
     ws_tx: Arc<broadcast::Sender<String>>,
     node_start_time: u64,
+    listen_addrs: Arc<std::sync::RwLock<Vec<String>>>,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let state = ApiState {
         consensus,
@@ -1681,6 +1692,7 @@ pub async fn run_server(
         faucet_cooldowns: Arc::new(DashMap::new()),
         ip_rate_limits: Arc::new(DashMap::new()),
         pending_nonces: Arc::new(DashMap::new()),
+        listen_addrs,
     };
     let app = create_router(state);
     let addr = std::net::SocketAddr::from(([0, 0, 0, 0], port));

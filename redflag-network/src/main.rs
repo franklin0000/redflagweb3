@@ -145,8 +145,10 @@ async fn main() -> Result<(), Box<dyn Error>> {
     let rpc_faucet_key = faucet_key.clone();
     let rpc_faucet_addr = faucet_address.clone();
     let rpc_ws_tx = ws_tx.clone();
+    let listen_addrs: Arc<std::sync::RwLock<Vec<String>>> = Arc::new(std::sync::RwLock::new(Vec::new()));
+    let rpc_listen_addrs = listen_addrs.clone();
     tokio::spawn(async move {
-        if let Err(e) = rpc::run_server(rpc_consensus, rpc_port, rpc_peer_id, rpc_faucet_key, rpc_faucet_addr, rpc_ws_tx, node_start_time).await {
+        if let Err(e) = rpc::run_server(rpc_consensus, rpc_port, rpc_peer_id, rpc_faucet_key, rpc_faucet_addr, rpc_ws_tx, node_start_time, rpc_listen_addrs).await {
             eprintln!("❌ Error RPC: {}", e);
         }
     });
@@ -173,14 +175,34 @@ async fn main() -> Result<(), Box<dyn Error>> {
     println!("🛡️  Chain ID:   {}", CHAIN_ID);
 
     // ── 7. Bootstrap peers (opcional) ────────────────────────────────────────
-    // Soporta BOOTSTRAP_PEERS=addr1,addr2,addr3 o BOOTSTRAP_PEER=addr
-    let bootstrap_list: Vec<String> = if let Ok(peers) = env::var("BOOTSTRAP_PEERS") {
-        peers.split(',').map(|s| s.trim().to_string()).filter(|s| !s.is_empty()).collect()
+    // Soporta BOOTSTRAP_URL=https://node1/network/addrs (para redes donde TCP P2P externo está bloqueado)
+    // o BOOTSTRAP_PEERS=addr1,addr2 / BOOTSTRAP_PEER=addr para multiaddrs directos
+    let mut bootstrap_list: Vec<String> = vec![];
+
+    if let Ok(url) = env::var("BOOTSTRAP_URL") {
+        println!("📡 Obteniendo bootstrap desde {}…", url);
+        match reqwest::get(&url).await {
+            Ok(resp) => match resp.json::<serde_json::Value>().await {
+                Ok(data) => {
+                    // Preferir IPs privadas (10.x, 172.16-31.x, 192.168.x) para evitar bloqueo externo
+                    let addrs: Vec<String> = data["addrs"].as_array().unwrap_or(&vec![])
+                        .iter().filter_map(|v| v.as_str().map(|s| s.to_string())).collect();
+                    let private_addrs: Vec<String> = addrs.iter()
+                        .filter(|a| a.contains("/ip4/10.") || a.contains("/ip4/172.") || a.contains("/ip4/192.168."))
+                        .cloned().collect();
+                    bootstrap_list = if !private_addrs.is_empty() { private_addrs } else { addrs };
+                    println!("✅ Bootstrap addrs: {:?}", bootstrap_list);
+                }
+                Err(e) => eprintln!("⚠️  Bootstrap URL parse error: {}", e),
+            },
+            Err(e) => eprintln!("⚠️  Bootstrap URL fetch failed: {}", e),
+        }
+    } else if let Ok(peers) = env::var("BOOTSTRAP_PEERS") {
+        bootstrap_list = peers.split(',').map(|s| s.trim().to_string()).filter(|s| !s.is_empty()).collect();
     } else if let Ok(peer) = env::var("BOOTSTRAP_PEER") {
-        vec![peer]
-    } else {
-        vec![]
-    };
+        bootstrap_list = vec![peer];
+    }
+
     for addr_str in &bootstrap_list {
         match addr_str.parse::<Multiaddr>() {
             Ok(multiaddr) => {
@@ -294,7 +316,14 @@ async fn main() -> Result<(), Box<dyn Error>> {
                 if let Some(event) = event {
                     match event {
                         SwarmEvent::NewListenAddr { address, .. } => {
-                            println!("📍 Escuchando: {}/p2p/{}", address, peer_id);
+                            let full_addr = format!("{}/p2p/{}", address, peer_id);
+                            println!("📍 Escuchando: {}", full_addr);
+                            // Registrar en listen_addrs para que /network/addrs las sirva
+                            if let Ok(mut addrs) = listen_addrs.write() {
+                                if !addrs.contains(&full_addr) {
+                                    addrs.push(full_addr);
+                                }
+                            }
                         }
                         SwarmEvent::ConnectionEstablished { peer_id: remote_peer, .. } => {
                             println!("🤝 Conectado: {}", remote_peer);

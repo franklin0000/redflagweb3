@@ -216,6 +216,8 @@ pub fn create_router(state: ApiState) -> Router {
         .route("/ws",               get(ws_handler))
         // Métricas Prometheus
         .route("/metrics",          get(get_metrics))
+        .route("/supply/total",       get(supply_total))
+        .route("/supply/circulating", get(supply_circulating))
         .with_state(state);
 
     Router::new()
@@ -482,6 +484,19 @@ async fn get_network_stats(State(state): State<ApiState>) -> Json<serde_json::Va
             "version": env!("CARGO_PKG_VERSION"),
         }
     }))
+}
+
+// ── Supply Endpoints (plain-number, CMC/CoinGecko compatible) ────────────────
+
+async fn supply_total() -> String {
+    1_500_000_000u64.to_string()
+}
+
+async fn supply_circulating(State(state): State<ApiState>) -> String {
+    let faucet_bal = state.consensus.state.get_balance(&state.faucet_address);
+    let genesis_bal = state.consensus.state.get_balance("RedFlag_Genesis_Alpha");
+    let total_issued: u64 = 1_500_000_000;
+    total_issued.saturating_sub(faucet_bal).saturating_sub(genesis_bal).to_string()
 }
 
 // ── Explorer Search ──────────────────────────────────────────────────────────

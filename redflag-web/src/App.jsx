@@ -2002,7 +2002,9 @@ function DocsPage() {
               {[
                 {label:'𝕏 Twitter',  href:'https://x.com/franff546758',          color:'var(--fg)'},
                 {label:'Telegram',   href:'https://t.me/redflag21blockchain',      color:'var(--cyan)'},
-                {label:'Website',    href:'https://ipfs.io/ipfs/QmSC5VEFHRWT1XTBohtyWwhRMyYMdupwViw8CztgQQfr5U/', color:'var(--green)'},
+                {label:'PancakeSwap',href:'https://pancakeswap.finance/swap?outputCurrency=0xC348059b15562d2AED65382130379C96185C4A71', color:'var(--green)'},
+                {label:'SushiSwap',  href:'https://app.sushi.com/swap?outputCurrency=0xf99129BEc6c189942A135f0Ee0FB0C87091CE51a', color:'var(--purple)'},
+                {label:'BscScan',    href:'https://bscscan.com/address/0xC348059b15562d2AED65382130379C96185C4A71', color:'var(--yellow)'},
                 {label:'GitHub',     href:'https://github.com/franklin0000/redflagweb3', color:'var(--txm)'},
               ].map(l=>(
                 <a key={l.label} href={l.href} target="_blank" rel="noreferrer"
@@ -2019,14 +2021,33 @@ function DocsPage() {
                 {label:'Consensus',    value:'Bullshark DAG BFT'},
                 {label:'Block Time',   value:'~200ms'},
                 {label:'Total Supply', value:'1.5B RF'},
+                {label:'Max Supply',   value:'2.1B RF'},
                 {label:'Min Fee',      value:'1 RF'},
                 {label:'Min Stake',    value:'10,000 RF'},
+                {label:'wRF (BNB)',    value:'PancakeSwap'},
+                {label:'wRF (ETH)',    value:'SushiSwap'},
+                {label:'Price',        value:'~$0.000018'},
               ].map(i=>(
                 <div key={i.label} style={{padding:'10px 12px',background:'var(--bg)',borderRadius:8}}>
                   <div style={{fontSize:11,color:'var(--txl)'}}>{i.label}</div>
                   <div style={{fontSize:14,fontWeight:700,marginTop:4}}>{i.value}</div>
                 </div>
               ))}
+            </div>
+            <div style={{marginTop:16,padding:'14px 16px',background:'var(--green)10',borderRadius:8,border:'1px solid var(--green)30'}}>
+              <div style={{fontWeight:700,color:'var(--green)',marginBottom:8,fontSize:13}}>Buy wRF Now</div>
+              <div style={{display:'flex',gap:10,flexWrap:'wrap'}}>
+                <a href="https://pancakeswap.finance/swap?outputCurrency=0xC348059b15562d2AED65382130379C96185C4A71"
+                  target="_blank" rel="noreferrer"
+                  style={{padding:'8px 16px',background:'var(--green)',color:'#000',borderRadius:8,fontWeight:700,fontSize:13,textDecoration:'none'}}>
+                  PancakeSwap (BNB)
+                </a>
+                <a href="https://app.sushi.com/swap?outputCurrency=0xf99129BEc6c189942A135f0Ee0FB0C87091CE51a"
+                  target="_blank" rel="noreferrer"
+                  style={{padding:'8px 16px',background:'var(--purple)',color:'#fff',borderRadius:8,fontWeight:700,fontSize:13,textDecoration:'none'}}>
+                  SushiSwap (ETH)
+                </a>
+              </div>
             </div>
           </div>
         )}

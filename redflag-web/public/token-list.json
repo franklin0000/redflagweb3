@@ -1,9 +1,9 @@
 {
   "name": "RedFlag Token List",
-  "logoURI": "https://ipfs.io/ipfs/QmSC5VEFHRWT1XTBohtyWwhRMyYMdupwViw8CztgQQfr5U/logo.png",
-  "keywords": ["redflag", "rf", "quantum", "defi"],
+  "logoURI": "https://ipfs.io/ipfs/QmYYQR7cemKiAc7Xw8TDUGqTaSuGzN33b5pDkSwGsShzWQ",
+  "keywords": ["redflag", "rf", "wrf", "quantum", "defi", "post-quantum"],
   "timestamp": "2026-04-12T00:00:00Z",
-  "version": { "major": 1, "minor": 2, "patch": 0 },
+  "version": { "major": 1, "minor": 3, "patch": 0 },
   "tokens": [
     {
       "chainId": 2100,
@@ -11,15 +11,45 @@
       "symbol": "RF",
       "name": "RedFlag",
       "decimals": 6,
-      "logoURI": "https://ipfs.io/ipfs/QmSC5VEFHRWT1XTBohtyWwhRMyYMdupwViw8CztgQQfr5U/logo.png",
+      "logoURI": "https://ipfs.io/ipfs/QmYYQR7cemKiAc7Xw8TDUGqTaSuGzN33b5pDkSwGsShzWQ",
       "tags": ["native", "quantum-resistant"],
       "extensions": {
-        "website": "https://ipfs.io/ipfs/QmSC5VEFHRWT1XTBohtyWwhRMyYMdupwViw8CztgQQfr5U/",
-        "description": "Native token of redflag.web3 — a quantum-resistant blockchain using ML-DSA-65 + ML-KEM-768 post-quantum cryptography and Bullshark DAG consensus.",
+        "website": "https://redflagweb3-node1.onrender.com",
+        "description": "Native token of redflag.web3 — a quantum-resistant Layer-1 blockchain using ML-DSA-65 + ML-KEM-768 post-quantum cryptography and Bullshark DAG BFT consensus. Max supply: 2,100,000,000 RF.",
         "twitter": "https://x.com/franff546758",
         "telegram": "https://t.me/redflag21blockchain",
         "coingeckoId": "redflag",
         "explorer": "https://redflagweb3-node1.onrender.com"
+      }
+    },
+    {
+      "chainId": 56,
+      "address": "0xC348059b15562d2AED65382130379C96185C4A71",
+      "symbol": "wRF",
+      "name": "Wrapped RedFlag",
+      "decimals": 6,
+      "logoURI": "https://ipfs.io/ipfs/QmYYQR7cemKiAc7Xw8TDUGqTaSuGzN33b5pDkSwGsShzWQ",
+      "tags": ["wrapped", "bep20", "pancakeswap"],
+      "extensions": {
+        "website": "https://redflagweb3-node1.onrender.com",
+        "description": "BEP-20 wrapped version of RF on BNB Chain. Trade on PancakeSwap.",
+        "twitter": "https://x.com/franff546758",
+        "bridgeInfo": { "2100": { "tokenAddress": "0x0000000000000000000000000000000000000001" } }
+      }
+    },
+    {
+      "chainId": 1,
+      "address": "0xf99129BEc6c189942A135f0Ee0FB0C87091CE51a",
+      "symbol": "wRF",
+      "name": "Wrapped RedFlag",
+      "decimals": 6,
+      "logoURI": "https://ipfs.io/ipfs/QmYYQR7cemKiAc7Xw8TDUGqTaSuGzN33b5pDkSwGsShzWQ",
+      "tags": ["wrapped", "erc20", "sushiswap"],
+      "extensions": {
+        "website": "https://redflagweb3-node1.onrender.com",
+        "description": "ERC-20 wrapped version of RF on Ethereum. Trade on SushiSwap.",
+        "twitter": "https://x.com/franff546758",
+        "bridgeInfo": { "2100": { "tokenAddress": "0x0000000000000000000000000000000000000001" } }
       }
     },
     {

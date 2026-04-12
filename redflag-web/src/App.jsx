@@ -527,10 +527,19 @@ function ExplorerPage({initialQuery='', wsData}) {
   const [result,setResult] = useState(null);
   const [loading,setLoading] = useState(false);
   const [vertices,setVertices] = useState([]);
-  const [selectedVertex,setSelectedVertex] = useState(null);
-  const [tab,setTab] = useState('blocks'); // 'blocks' | 'search'
+  const [recentTxs,setRecentTxs] = useState([]);
+  const [page,setPage] = useState(0);
+  const PAGE_SIZE = 20;
+  const [tab,setTab] = useState('blocks'); // 'blocks' | 'txs' | 'search'
 
-  const loadVertices = useCallback(()=>sdk.getVertices().then(v=>setVertices(v||[])).catch(()=>{}), []);
+  const loadVertices = useCallback(async()=>{
+    const v = await sdk.getVertices().catch(()=>[]);
+    setVertices(v||[]);
+    // flatten txs from all vertices
+    const txs = (v||[]).flatMap(vx=>(vx.transactions||[]).map(tx=>({...tx,vertex_id:vx.id,round:vx.round,committed:vx.committed})));
+    txs.sort((a,b)=>(b.timestamp||b.round||0)-(a.timestamp||a.round||0));
+    setRecentTxs(txs);
+  }, []);
 
   // Fallback poll 30s; WS new_block fires instantly
   useEffect(()=>{ loadVertices(); const id=setInterval(loadVertices,30000); return()=>clearInterval(id); },[loadVertices]);
@@ -591,8 +600,11 @@ function ExplorerPage({initialQuery='', wsData}) {
 
       {/* Tabs */}
       <div style={{display:'flex',borderBottom:'1px solid var(--border)',marginBottom:20}}>
-        <button style={tabStyle('blocks')} onClick={()=>setTab('blocks')}>Live Blocks</button>
-        <button style={tabStyle('search')} onClick={()=>setTab('search')}>Search Results</button>
+        <button style={tabStyle('blocks')} onClick={()=>{ setTab('blocks'); setPage(0); }}>Live Blocks</button>
+        <button style={tabStyle('txs')} onClick={()=>{ setTab('txs'); setPage(0); }}>
+          Recent TXs {recentTxs.length>0 && <span style={{marginLeft:4,background:'var(--cyan)',color:'#000',borderRadius:10,padding:'0 5px',fontSize:10,fontWeight:700}}>{recentTxs.length}</span>}
+        </button>
+        <button style={tabStyle('search')} onClick={()=>setTab('search')}>Search</button>
       </div>
 
       {/* Search results tab */}
@@ -673,18 +685,53 @@ function ExplorerPage({initialQuery='', wsData}) {
         <div style={{textAlign:'center',color:'var(--txl)',padding:40}}>Enter an address, vertex ID or tx hash to search</div>
       )}
 
+      {/* Recent TXs tab */}
+      {tab==='txs' && (
+        <div className="card np">
+          <div style={{padding:'16px 18px 10px',display:'flex',alignItems:'center',justifyContent:'space-between'}}>
+            <SectionHdr icon={ArrowUpRight} title="Recent Transactions" color="var(--green)"/>
+            <span style={{fontSize:11,color:'var(--txl)'}}>{recentTxs.length} transactions</span>
+          </div>
+          <div style={{overflowX:'auto'}}>
+            <table className="tbl">
+              <thead><tr><th>Round</th><th>From</th><th>To</th><th>Amount</th><th>Fee</th><th>Time</th></tr></thead>
+              <tbody>
+                {recentTxs.slice(page*PAGE_SIZE,(page+1)*PAGE_SIZE).map((tx,i)=>(
+                  <tr key={i}>
+                    <td className="bold" style={{color:'var(--cyan)'}}>{tx.round||'—'}</td>
+                    <td className="mono" style={{cursor:'pointer',color:'var(--cyan)'}} onClick={()=>{setQ(tx.sender);setTab('search');sdk.search(tx.sender).then(setResult);}}>{short(tx.sender||'',12)}</td>
+                    <td className="mono" style={{cursor:'pointer',color:'var(--purple)'}} onClick={()=>{setQ(tx.receiver);setTab('search');sdk.search(tx.receiver).then(setResult);}}>{short(tx.receiver||'',12)}</td>
+                    <td className="bold">{fmtN(tx.amount||0)} RF</td>
+                    <td style={{color:'var(--txl)'}}>{tx.fee||0}</td>
+                    <td style={{color:'var(--txl)',fontSize:11}}>{tx.timestamp ? fmtDate(tx.timestamp) : '—'}</td>
+                  </tr>
+                ))}
+                {recentTxs.length===0 && <tr><td colSpan={6} style={{textAlign:'center',color:'var(--txl)',padding:24}}>No transactions yet</td></tr>}
+              </tbody>
+            </table>
+          </div>
+          {recentTxs.length > PAGE_SIZE && (
+            <div style={{display:'flex',justifyContent:'center',gap:8,padding:'12px 0'}}>
+              <button className="btn" disabled={page===0} onClick={()=>setPage(p=>p-1)} style={{fontSize:12}}>← Prev</button>
+              <span style={{lineHeight:'32px',fontSize:12,color:'var(--txm)'}}>Page {page+1} / {Math.ceil(recentTxs.length/PAGE_SIZE)}</span>
+              <button className="btn" disabled={(page+1)*PAGE_SIZE>=recentTxs.length} onClick={()=>setPage(p=>p+1)} style={{fontSize:12}}>Next →</button>
+            </div>
+          )}
+        </div>
+      )}
+
       {/* Live blocks tab */}
       {tab==='blocks' && (
         <div className="card np">
           <div style={{padding:'16px 18px 10px',display:'flex',alignItems:'center',justifyContent:'space-between'}}>
             <SectionHdr icon={Database} title="Live Block Feed" color="var(--cyan)"/>
-            <span style={{fontSize:11,color:'var(--txl)'}}>auto-refresh 4s</span>
+            <span style={{fontSize:11,color:'var(--txl)'}}>{vertices.length} blocks</span>
           </div>
           <div style={{overflowX:'auto'}}>
             <table className="tbl">
               <thead><tr><th>Round</th><th>Vertex ID</th><th>Author</th><th>TXs</th><th>Status</th></tr></thead>
               <tbody>
-                {vertices.slice().sort((a,b)=>b.round-a.round).map(v=>(
+                {vertices.slice().sort((a,b)=>b.round-a.round).slice(page*PAGE_SIZE,(page+1)*PAGE_SIZE).map(v=>(
                   <tr key={v.id} style={{cursor:'pointer'}} onClick={()=>openVertex(v)}>
                     <td className="bold" style={{color:'var(--cyan)'}}>{v.round}</td>
                     <td className="mono" title={v.id}>0x{v.id.slice(0,16)}…</td>
@@ -701,6 +748,13 @@ function ExplorerPage({initialQuery='', wsData}) {
               </tbody>
             </table>
           </div>
+          {vertices.length > PAGE_SIZE && (
+            <div style={{display:'flex',justifyContent:'center',gap:8,padding:'12px 0'}}>
+              <button className="btn" disabled={page===0} onClick={()=>setPage(p=>p-1)} style={{fontSize:12}}>← Prev</button>
+              <span style={{lineHeight:'32px',fontSize:12,color:'var(--txm)'}}>Page {page+1} / {Math.ceil(vertices.length/PAGE_SIZE)}</span>
+              <button className="btn" disabled={(page+1)*PAGE_SIZE>=vertices.length} onClick={()=>setPage(p=>p+1)} style={{fontSize:12}}>Next →</button>
+            </div>
+          )}
         </div>
       )}
     </div>
@@ -1609,10 +1663,14 @@ function GovernancePage({wallet, wsData}) {
   const [tab, setTab] = useState('proposals');
   const [form, setForm] = useState({title:'',description:'',param:'MinFee',new_value:''});
   const [msg, setMsg] = useState(null);
+  const [currentRound, setCurrentRound] = useState(0);
+  const [totalStaked, setTotalStaked] = useState(0);
 
   const load = useCallback(()=>{
     sdk.get('/governance/proposals').then(r=>setProposals(r.proposals||[])).catch(()=>{});
     sdk.get('/oracle/prices').then(r=>setPrices(r.prices||[])).catch(()=>{});
+    sdk.getStatus().then(r=>setCurrentRound(r.current_round||0)).catch(()=>{});
+    sdk.get('/staking/stakes').then(r=>setTotalStaked(r.total_staked||0)).catch(()=>{});
   },[]);
   useEffect(()=>{ load(); const id=setInterval(load,30000); return()=>clearInterval(id); },[load]);
   useEffect(()=>{ if(wsData?.type==='new_block') load(); },[wsData, load]);
@@ -1662,36 +1720,70 @@ function GovernancePage({wallet, wsData}) {
       {tab==='proposals' && (
         <div>
           {proposals.length===0 && <div style={{textAlign:'center',color:'var(--txl)',padding:40}}>No hay propuestas aún. Sé el primero en crear una.</div>}
-          {proposals.map(p=>(
+          {proposals.map(p=>{
+            const totalVotes = (p.votes_for||0)+(p.votes_against||0);
+            const yesPercent = totalVotes>0 ? p.votes_for/totalVotes*100 : 0;
+            const quorumPercent = totalStaked>0 ? totalVotes/totalStaked*100 : 0;
+            const roundsLeft = p.status==='active' ? Math.max(0,(p.voting_end_round||0)-currentRound) : 0;
+            const alreadyVoted = wallet && p.voters?.includes(wallet.address);
+            return (
             <div key={p.id} className="card fi" style={{marginBottom:16}}>
-              <div style={{display:'flex',alignItems:'center',gap:10,marginBottom:12}}>
+              <div style={{display:'flex',alignItems:'center',gap:10,marginBottom:8,flexWrap:'wrap'}}>
                 <span style={{fontFamily:'var(--acc)',fontWeight:700,fontSize:15}}>#{p.id} {p.title}</span>
                 <span style={{fontSize:11,padding:'2px 8px',borderRadius:4,background:'rgba(255,255,255,0.07)',color:statusColor[p.status]||'var(--txm)',fontWeight:700}}>{p.status}</span>
+                {p.status==='active' && roundsLeft>0 && (
+                  <span style={{fontSize:11,color:'var(--yellow)',display:'flex',alignItems:'center',gap:4}}>
+                    <Clock size={11}/> {roundsLeft} rounds left
+                  </span>
+                )}
+                {alreadyVoted && <span style={{fontSize:11,color:'var(--green)'}}>✓ Voted</span>}
               </div>
-              <div style={{fontSize:13,color:'var(--txm)',marginBottom:12}}>{p.description}</div>
-              <div style={{display:'flex',gap:20,fontSize:12,color:'var(--txl)',marginBottom:12}}>
+              <div style={{fontSize:13,color:'var(--txm)',marginBottom:10}}>{p.description}</div>
+              <div style={{display:'flex',gap:16,fontSize:12,color:'var(--txl)',marginBottom:10,flexWrap:'wrap'}}>
                 <span>Param: <b style={{color:'var(--txt)'}}>{p.param}</b></span>
-                <span>Nuevo valor: <b style={{color:'var(--cyan)'}}>{p.new_value}</b></span>
-                <span>Votación cierra: ronda <b style={{color:'var(--txt)'}}>{p.voting_end_round}</b></span>
-                <span>Votantes: <b>{p.voter_count}</b></span>
+                <span>→ <b style={{color:'var(--cyan)'}}>{p.new_value}</b></span>
+                <span>Proposer: <b>{short(p.proposer||'',12)}</b></span>
+                <span>Voters: <b>{p.voter_count||0}</b></span>
               </div>
-              <div style={{display:'flex',gap:12,alignItems:'center',marginBottom:p.status==='active'?12:0}}>
-                <div style={{flex:1,background:'var(--bg)',borderRadius:6,height:8,overflow:'hidden'}}>
-                  {(p.votes_for+p.votes_against)>0 && (
-                    <div style={{width:`${p.votes_for/(p.votes_for+p.votes_against)*100}%`,height:'100%',background:'var(--green)'}}/>
-                  )}
+
+              {/* Vote bars */}
+              <div style={{display:'flex',flexDirection:'column',gap:6,marginBottom:10}}>
+                <div style={{display:'flex',alignItems:'center',gap:10}}>
+                  <span style={{fontSize:11,color:'var(--green)',minWidth:28}}>SÍ</span>
+                  <div style={{flex:1,background:'var(--bg)',borderRadius:4,height:6,overflow:'hidden'}}>
+                    <div style={{width:`${yesPercent}%`,height:'100%',background:'var(--green)',transition:'width .3s'}}/>
+                  </div>
+                  <span style={{fontSize:11,color:'var(--green)',minWidth:60,textAlign:'right'}}>{fmtN(p.votes_for||0)} RF</span>
                 </div>
-                <span style={{fontSize:12,color:'var(--green)',minWidth:80}}>SÍ: {fmtN(p.votes_for)} RF</span>
-                <span style={{fontSize:12,color:'var(--red)',minWidth:80}}>NO: {fmtN(p.votes_against)} RF</span>
+                <div style={{display:'flex',alignItems:'center',gap:10}}>
+                  <span style={{fontSize:11,color:'var(--red)',minWidth:28}}>NO</span>
+                  <div style={{flex:1,background:'var(--bg)',borderRadius:4,height:6,overflow:'hidden'}}>
+                    <div style={{width:`${100-yesPercent}%`,height:'100%',background:'var(--red)',transition:'width .3s'}}/>
+                  </div>
+                  <span style={{fontSize:11,color:'var(--red)',minWidth:60,textAlign:'right'}}>{fmtN(p.votes_against||0)} RF</span>
+                </div>
+                {/* Quorum bar */}
+                <div style={{display:'flex',alignItems:'center',gap:10}}>
+                  <span style={{fontSize:10,color:'var(--txl)',minWidth:28}}>QRM</span>
+                  <div style={{flex:1,background:'var(--bg)',borderRadius:4,height:4,overflow:'hidden'}}>
+                    <div style={{width:`${Math.min(100,quorumPercent)}%`,height:'100%',background:quorumPercent>=10?'var(--cyan)':'var(--yellow)',transition:'width .3s'}}/>
+                  </div>
+                  <span style={{fontSize:10,color:quorumPercent>=10?'var(--cyan)':'var(--yellow)',minWidth:60,textAlign:'right'}}>{quorumPercent.toFixed(1)}% / 10%</span>
+                </div>
               </div>
-              {p.status==='active' && (
+
+              {p.status==='active' && !alreadyVoted && (
                 <div style={{display:'flex',gap:8}}>
-                  <button className="btn btn-p" style={{flex:1,fontSize:12}} onClick={()=>vote(p.id,true)}>Votar SÍ</button>
-                  <button className="btn" style={{flex:1,fontSize:12,borderColor:'var(--red)',color:'var(--red)'}} onClick={()=>vote(p.id,false)}>Votar NO</button>
+                  <button className="btn btn-p" style={{flex:1,fontSize:12}} onClick={()=>vote(p.id,true)}>✓ Votar SÍ</button>
+                  <button className="btn" style={{flex:1,fontSize:12,borderColor:'var(--red)',color:'var(--red)'}} onClick={()=>vote(p.id,false)}>✗ Votar NO</button>
                 </div>
               )}
+              {p.status==='active' && alreadyVoted && (
+                <div style={{fontSize:12,color:'var(--green)',textAlign:'center',padding:'6px 0'}}>✓ Tu voto ha sido registrado</div>
+              )}
             </div>
-          ))}
+            );
+          })}
         </div>
       )}
 
@@ -2088,13 +2180,31 @@ export default function App() {
   const [search,setSearch]   = useState('');
   const [searchQuery,setSearchQuery] = useState('');
   const [sidebarOpen,setSidebarOpen] = useState(false);
+  const [activeProposals,setActiveProposals] = useState(0);
   const prevTx = useRef(0);
 
   const ks = hasKeystore();
+  const [notifEnabled, setNotifEnabled] = useState(false);
 
-  // Load wallet from memory only (never store decrypted)
-  // If wallet is null and keystore exists → show lock screen
-  // If no keystore → show onboarding
+  // ── Service Worker + PWA install ──────────────────────────────────────────
+  useEffect(()=>{
+    if('serviceWorker' in navigator) {
+      navigator.serviceWorker.register('/sw.js').catch(()=>{});
+    }
+    setNotifEnabled(Notification?.permission === 'granted');
+  },[]);
+
+  const enableNotifications = async()=>{
+    if(!('Notification' in window)) return;
+    const perm = await Notification.requestPermission();
+    setNotifEnabled(perm === 'granted');
+  };
+
+  const pushNotif = useCallback((title, body, tag='rf')=>{
+    if(Notification?.permission === 'granted') {
+      new Notification(title, { body, icon:'/logo.png', tag });
+    }
+  },[]);
 
   const fetchData = useCallback(async()=>{
     try {
@@ -2108,6 +2218,9 @@ export default function App() {
       const ts = new Date().toLocaleTimeString('en',{hour:'2-digit',minute:'2-digit',second:'2-digit'});
       setTpsHist(h=>[...h.slice(-29),{t:ts,v:Math.max(0,diff)}]);
       setPending(m?.count||0);
+      sdk.get('/governance/proposals').then(r=>{
+        setActiveProposals((r.proposals||[]).filter(p=>p.status==='active').length);
+      }).catch(()=>{});
     } catch { setOnline(false); }
   },[]);
 
@@ -2117,11 +2230,19 @@ export default function App() {
     return ()=>clearInterval(iv);
   },[fetchData]);
 
-  // WebSocket — refresh stats on every network event
+  // WebSocket — refresh stats + push notifications on network events
   useEffect(()=>{
-    const unsub = sdk.connectWS(data=>{ setWsData(data); fetchData(); });
+    const unsub = sdk.connectWS(data=>{
+      setWsData(data); fetchData();
+      if(data?.type==='faucet' && wallet && data?.to && data.to.startsWith(wallet.address?.slice(0,16))) {
+        pushNotif('Faucet received', `+${data.amount} RF arrived in your wallet`,'faucet');
+      }
+      if(data?.type==='staking_stake') {
+        pushNotif('New validator', `${data.address?.slice(0,12)}… staked ${data.amount} RF`,'stake');
+      }
+    });
     return ()=>{ if(typeof unsub==='function') unsub(); };
-  },[fetchData]);
+  },[fetchData, wallet, pushNotif]);
 
   // Search redirect
   const handleSearch = e=>{
@@ -2153,7 +2274,8 @@ export default function App() {
             <div key={p.id} className={`nav-item ${page===p.id?'on':''}`} onClick={()=>navTo(p.id)}>
               <p.icon size={17}/>
               {p.label}
-              {p.id==='wallet' && pendingBadge>0 && <span className="nav-badge">{pendingBadge}</span>}
+              {p.id==='wallet'     && pendingBadge>0    && <span className="nav-badge">{pendingBadge}</span>}
+              {p.id==='governance' && activeProposals>0 && <span className="nav-badge">{activeProposals}</span>}
             </div>
           ))}
         </nav>
@@ -2182,6 +2304,11 @@ export default function App() {
               <div className={`ldot ${online?'on':'off'}`}/>
               {online?'Connected':'Offline'}
             </div>
+            {!notifEnabled && Notification?.permission !== 'denied' && (
+              <button className="ibtn" onClick={enableNotifications} title="Enable notifications" style={{color:'var(--yellow)'}}>
+                <Activity size={14}/>
+              </button>
+            )}
             <button className="ibtn" onClick={fetchData} title="Refresh"><RefreshCw size={14}/></button>
           </div>
         </div>

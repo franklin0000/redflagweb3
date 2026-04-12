@@ -182,6 +182,7 @@ pub fn create_router(state: ApiState) -> Router {
         // Bridge cross-chain info
         .route("/bridge/info",            get(bridge_info))
         .route("/bridge/chains",          get(bridge_chains))
+        .route("/bridge/pubkey",          get(bridge_pubkey))
         // Market data (CoinGecko / CMC compatible)
         .route("/api/v1/summary",         get(market_summary))
         .route("/api/v1/ticker",          get(market_ticker))
@@ -1382,6 +1383,13 @@ async fn validator_apply(
         "message": "Solicitud recibida. El owner de la red la revisará pronto.",
         "next": "Únete al Discord/Telegram de redflag.web3 para seguimiento.",
     })))
+}
+
+// ── Bridge committee pubkey ──────────────────────────────────────────────────
+
+async fn bridge_pubkey(State(state): State<ApiState>) -> Json<serde_json::Value> {
+    let pubkey = hex::encode(state.faucet_key.public_key().to_vec());
+    Json(serde_json::json!({ "pubkey": pubkey }))
 }
 
 // ── Bridge info ──────────────────────────────────────────────────────────────

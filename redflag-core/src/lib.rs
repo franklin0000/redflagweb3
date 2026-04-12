@@ -13,6 +13,10 @@ pub const GENESIS_ADDRESS: &str = "RedFlag_Genesis_Alpha";
 /// Balance inicial del genesis
 pub const GENESIS_BALANCE: u64 = 1_000_000_000;
 
+/// Suministro máximo absoluto: 2,100,000,000 RF (en micro-RF, 6 decimales)
+/// Ninguna TX puede hacer que el total supere este valor. NUNCA se modifica.
+pub const MAX_SUPPLY: u64 = 2_100_000_000_000_000;
+
 /// Fee mínimo por transacción (protección anti-spam)
 pub const MIN_FEE: u64 = 1;
 

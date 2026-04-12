@@ -649,6 +649,14 @@ async fn submit_transaction(
     State(state): State<ApiState>,
     Json(mut tx): Json<Transaction>,
 ) -> (StatusCode, Json<TxResponse>) {
+    // Block external genesis transactions — only internal node code can mint RF
+    if tx.sender == redflag_core::GENESIS_ADDRESS || tx.sender == redflag_core::FEE_POOL_ADDRESS {
+        return (StatusCode::FORBIDDEN, Json(TxResponse {
+            accepted: false,
+            message: "Transacciones genesis no permitidas desde el exterior".into(),
+            tx_hash: None,
+        }));
+    }
     if tx.chain_id != CHAIN_ID || tx.fee < MIN_FEE {
         return (StatusCode::BAD_REQUEST, Json(TxResponse { accepted: false, message: "Chain ID o Fee inválido".into(), tx_hash: None }));
     }

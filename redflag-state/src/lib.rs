@@ -1,7 +1,7 @@
 use serde::{Serialize, Deserialize};
 use sled::{Db, Tree};
 use std::sync::Arc;
-use redflag_core::{Transaction, CHAIN_ID, GENESIS_ADDRESS, FEE_POOL_ADDRESS, GENESIS_BALANCE};
+use redflag_core::{Transaction, CHAIN_ID, GENESIS_ADDRESS, FEE_POOL_ADDRESS, GENESIS_BALANCE, MAX_SUPPLY};
 use redflag_crypto::Verifier;
 use rayon::prelude::*;
 use redflag_vm::ContractVm;
@@ -115,6 +115,17 @@ impl StateDB {
         self.get_account(address).map(|a| a.balance).unwrap_or(0)
     }
 
+    /// Total de micro-RF emitidos = saldo genesis_inicial + todo lo que salió de genesis.
+    /// Se calcula como MAX_SUPPLY menos lo que aún NO ha sido emitido.
+    /// En la práctica: suma genesis_balance + faucet_balance + todo lo distribuido.
+    /// Implementación simple: iteramos todas las cuentas y sumamos balances.
+    pub fn total_supply_micro_rf(&self) -> u64 {
+        self.db.iter()
+            .filter_map(|r| r.ok())
+            .filter_map(|(_, v)| postcard::from_bytes::<Account>(&v).ok())
+            .fold(0u64, |acc, a| acc.saturating_add(a.balance))
+    }
+
     pub fn get_account(&self, address: &str) -> Option<Account> {
         self.db.get(address).ok().flatten()
             .and_then(|b| postcard::from_bytes::<Account>(&b).ok())
@@ -180,6 +191,17 @@ impl StateDB {
         }
 
         let is_genesis = tx.sender == GENESIS_ADDRESS;
+
+        // ── SUPPLY CAP: ninguna TX genesis puede superar MAX_SUPPLY ──────────
+        if is_genesis {
+            let current_total = self.total_supply_micro_rf();
+            if current_total.saturating_add(tx.amount) > MAX_SUPPLY {
+                anyhow::bail!(
+                    "Supply cap: mintear {} micro-RF superaría el máximo de {} ({} emitidos)",
+                    tx.amount, MAX_SUPPLY, current_total
+                );
+            }
+        }
 
         // FIX G: Validar campos básicos de la TX
         if !is_genesis {

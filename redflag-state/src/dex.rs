@@ -254,6 +254,9 @@ impl DexState {
         if lp_tokens > pos.lp_tokens {
             anyhow::bail!("LP tokens insuficientes: tienes {}, pediste {}", pos.lp_tokens, lp_tokens);
         }
+        if pool.total_lp == 0 {
+            anyhow::bail!("Pool vacío — total_lp es 0");
+        }
 
         let amount_rf = (pool.reserve_rf as u128 * lp_tokens as u128 / pool.total_lp as u128) as u64;
         let amount_b  = (pool.reserve_b  as u128 * lp_tokens as u128 / pool.total_lp as u128) as u64;

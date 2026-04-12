@@ -436,7 +436,7 @@ async fn get_metrics(State(state): State<ApiState>) -> (HeaderMap, String) {
 
 // ── Network Listen Addresses (for internal bootstrap between nodes) ──────────
 async fn network_addrs(State(state): State<ApiState>) -> Json<serde_json::Value> {
-    let addrs = state.listen_addrs.read().unwrap().clone();
+    let addrs = state.listen_addrs.read().unwrap_or_else(|e| e.into_inner()).clone();
     Json(serde_json::json!({ "peer_id": state.peer_id, "addrs": addrs }))
 }
 
@@ -961,7 +961,11 @@ async fn bridge_mint(
     } else {
         // Modo legado: secreto compartido
         let expected = match std::env::var("BRIDGE_MINT_SECRET") {
-            Ok(s) if !s.is_empty() && s != "bridge_dev_secret" => s,
+            Ok(s) if s.len() >= 32 && s != "bridge_dev_secret" => s,
+            Ok(s) if !s.is_empty() && s.len() < 32 => {
+                tracing::error!("BRIDGE_MINT_SECRET demasiado corto ({} chars, mínimo 32)", s.len());
+                return (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({ "error": "Bridge no configurado correctamente" })));
+            }
             _ => {
                 tracing::error!("BRIDGE_MINT_SECRET no configurado o usa valor por defecto inseguro");
                 return (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({ "error": "Bridge no configurado correctamente" })));

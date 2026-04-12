@@ -5,7 +5,7 @@
 set -e
 
 REPO="https://github.com/franklin0000/redflagweb3"
-BOOTSTRAP="/dns4/redflagweb3-node1.onrender.com/tcp/9000"
+BOOTSTRAP=$(curl -sf https://redflagweb3-node1.onrender.com/validators 2>/dev/null | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('bootstrap_peer',''))" 2>/dev/null || echo "/dns4/redflagweb3-node1.onrender.com/tcp/9000")
 NODE_BIN="redflag-network"
 DATA_DIR="$HOME/.redflag/data"
 SERVICE_NAME="redflag-node"

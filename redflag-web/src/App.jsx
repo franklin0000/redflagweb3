@@ -531,6 +531,7 @@ function ExplorerPage({initialQuery='', wsData}) {
   const [page,setPage] = useState(0);
   const PAGE_SIZE = 20;
   const [tab,setTab] = useState('blocks'); // 'blocks' | 'txs' | 'search'
+  const [selectedVertex,setSelectedVertex] = useState(null); // eslint-disable-line no-unused-vars
 
   const loadVertices = useCallback(async()=>{
     const v = await sdk.getVertices().catch(()=>[]);
@@ -1229,10 +1230,11 @@ function DexPage({ wallet, wsData }) {
 // BRIDGE PAGE
 // ─────────────────────────────────────────────
 const BRIDGE_CONTRACTS = {
-  BSC:     { address: '0x06436bf6E71964A99bD4078043aa4cDfA0eadEe6', chainId: '0x38', name: 'BNB Chain',  symbol: 'BNB',  explorer: 'https://bscscan.com/tx/' },
   ETH:     { address: '0x92E83A72b3CD6d699cc8F16D756d5f31aCF55659', chainId: '0x1',  name: 'Ethereum', symbol: 'ETH',  explorer: 'https://etherscan.io/tx/' },
+  BSC:     { address: '0x06436bf6E71964A99bD4078043aa4cDfA0eadEe6', chainId: '0x38', name: 'BNB Chain',  symbol: 'BNB',  explorer: 'https://bscscan.com/tx/' },
   Polygon: { address: '0x19D2A913a6df973a7ad600F420960235307c6Cbf', chainId: '0x89', name: 'Polygon',  symbol: 'MATIC', explorer: 'https://polygonscan.com/tx/' },
 };
+const BRIDGE_SOON = ['Solana (wSOL)', 'Avalanche (wAVAX)', 'Arbitrum (wARB)', 'Bitcoin (wBTC)'];
 
 const LOCK_ABI = [{
   name: 'lock', type: 'function', stateMutability: 'payable',
@@ -1631,6 +1633,16 @@ function BridgePage({ wallet }) {
         </div>
       </div>
 
+      {/* Coming soon chains */}
+      <div className="card fi" style={{background:'var(--bg3)'}}>
+        <div style={{fontSize:12,color:'var(--txl)',fontWeight:600,marginBottom:8}}>PRÓXIMAMENTE</div>
+        <div style={{display:'flex',gap:6,flexWrap:'wrap'}}>
+          {BRIDGE_SOON.map(c=>(
+            <span key={c} style={{padding:'4px 10px',borderRadius:6,background:'var(--bg)',border:'1px solid var(--bdr)',fontSize:11,color:'var(--txl)'}}>{c}</span>
+          ))}
+        </div>
+      </div>
+
       {/* Send */}
       <button className="btn" onClick={doBridge} disabled={loading || !mmAddr}
         style={{width:'100%',padding:'12px',fontSize:15,opacity:loading||!mmAddr?0.5:1}}>
@@ -1677,11 +1689,11 @@ function GovernancePage({wallet, wsData}) {
 
   const propose = async(e)=>{
     e.preventDefault();
-    if(!wallet?.privateKeyHex) return setMsg({type:'err',text:'Conecta tu wallet primero'});
+    if(!wallet?.private_key_hex) return setMsg({type:'err',text:'Conecta tu wallet primero'});
     setLoading(true); setMsg(null);
     try {
       const r = await sdk.post('/governance/propose',{
-        private_key_hex: wallet.privateKeyHex,
+        private_key_hex: wallet.private_key_hex,
         title: form.title, description: form.description,
         param: form.param, new_value: parseInt(form.new_value)||0,
       });
@@ -1692,9 +1704,9 @@ function GovernancePage({wallet, wsData}) {
   };
 
   const vote = async(id, voteFor)=>{
-    if(!wallet?.privateKeyHex) return setMsg({type:'err',text:'Conecta tu wallet primero'});
+    if(!wallet?.private_key_hex) return setMsg({type:'err',text:'Conecta tu wallet primero'});
     try {
-      const r = await sdk.post('/governance/vote',{private_key_hex:wallet.privateKeyHex, proposal_id:id, vote:voteFor});
+      const r = await sdk.post('/governance/vote',{private_key_hex:wallet.private_key_hex, proposal_id:id, vote:voteFor});
       if(r.success) { setMsg({type:'ok',text:`Voto registrado (${r.stake_weight} RF de peso)`}); load(); }
       else setMsg({type:'err',text:r.error});
     } catch(ex){ setMsg({type:'err',text:ex.message}); }
@@ -1801,10 +1813,10 @@ function GovernancePage({wallet, wsData}) {
               </select>
               <input className="inp" placeholder="Nuevo valor" type="number" value={form.new_value} onChange={e=>setForm({...form,new_value:e.target.value})} style={{flex:1}} required/>
             </div>
-            <button className="btn btn-p" type="submit" disabled={loading||!wallet?.privateKeyHex}>
+            <button className="btn btn-p" type="submit" disabled={loading||!wallet?.private_key_hex}>
               {loading?<span className="spin"><RefreshCw size={14}/></span>:<Users size={14}/>} Crear Propuesta
             </button>
-            {!wallet?.privateKeyHex && <Alert type="wrn">Necesitas stake activo y wallet conectada para proponer</Alert>}
+            {!wallet?.private_key_hex && <Alert type="wrn">Necesitas wallet conectada para proponer</Alert>}
           </form>
         </div>
       )}
@@ -1934,7 +1946,7 @@ function MonitoringPage() {
             {label:'Encryption', value:'ML-KEM-768 (Post-Quantum)', ok:true},
             {label:'Bridge Mode', value:'Threshold Multi-Sig 2-of-3', ok:true},
             {label:'Persistent Storage', value:'Render Disks (1GB/node)', ok:true},
-            {label:'State Sync', value:'Active (node2/node3)', ok:true},
+            {label:'State Sync', value:'Active (node2–node5)', ok:true},
           ].map(item=>(
             <div key={item.label} style={{padding:'10px 12px',background:'var(--bg)',borderRadius:8}}>
               <div style={{fontSize:11,color:'var(--txl)',marginBottom:4}}>{item.label}</div>

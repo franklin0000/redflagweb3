@@ -18,6 +18,7 @@ pub mod rpc;
 
 pub const TOPIC_TRANSACTIONS: &str = "redflag/txs/1.0.0";
 pub const TOPIC_BLOCKS: &str = "redflag/blocks/1.0.0";
+pub const TOPIC_CERTS: &str = "redflag/certs/1.0.0";
 pub const PROTOCOL_VERSION: &str = "/redflag/2.1.0";
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -25,6 +26,8 @@ pub enum NetworkMessage {
     NewTransaction(Vec<u8>),
     NewEncryptedTransaction(Vec<u8>),
     NewBlock(Vec<u8>),
+    /// Certificado parcial de un validador — los peers acumulan hasta 2f+1 firmas
+    NewCertificate(Vec<u8>),
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -161,8 +164,10 @@ impl RedFlagNode {
 
         let tx_topic = gossipsub::IdentTopic::new(TOPIC_TRANSACTIONS);
         let block_topic = gossipsub::IdentTopic::new(TOPIC_BLOCKS);
+        let cert_topic = gossipsub::IdentTopic::new(TOPIC_CERTS);
         node.swarm.behaviour_mut().gossipsub.subscribe(&tx_topic)?;
         node.swarm.behaviour_mut().gossipsub.subscribe(&block_topic)?;
+        node.swarm.behaviour_mut().gossipsub.subscribe(&cert_topic)?;
 
         Ok(node)
     }
@@ -364,6 +369,7 @@ impl RedFlagNode {
         let topic = match &msg {
             NetworkMessage::NewTransaction(_) | NetworkMessage::NewEncryptedTransaction(_) => TOPIC_TRANSACTIONS,
             NetworkMessage::NewBlock(_) => TOPIC_BLOCKS,
+            NetworkMessage::NewCertificate(_) => TOPIC_CERTS,
         };
         let data = postcard::to_allocvec(&msg)?;
         self.swarm.behaviour_mut().gossipsub.publish(gossipsub::IdentTopic::new(topic), data)?;

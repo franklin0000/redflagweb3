@@ -48,6 +48,8 @@ pub struct Certificate {
 pub struct Dag {
     pub vertices: DashMap<VertexId, Arc<Vertex>>,
     pub certificates: DashMap<Round, Vec<Arc<Certificate>>>,
+    /// Certificados agregados por vertex_id — acumula firmas de múltiples validadores
+    pub cert_by_vertex: DashMap<VertexId, Certificate>,
     pub db: Db,
     db_vertices: Tree,
     db_certificates: Tree,
@@ -62,6 +64,7 @@ impl Dag {
         let dag = Self {
             vertices: DashMap::new(),
             certificates: DashMap::new(),
+            cert_by_vertex: DashMap::new(),
             db,
             db_vertices,
             db_certificates,
@@ -85,6 +88,14 @@ impl Dag {
         for item in self.db_certificates.iter() {
             if let Ok((_, bytes)) = item {
                 if let Ok(c) = postcard::from_bytes::<Certificate>(&bytes) {
+                    // Reconstruir cert_by_vertex mergeando firmas
+                    self.cert_by_vertex.entry(c.vertex_id).and_modify(|existing| {
+                        for sig in &c.signatures {
+                            if !existing.signatures.iter().any(|(pk, _)| pk == &sig.0) {
+                                existing.signatures.push(sig.clone());
+                            }
+                        }
+                    }).or_insert_with(|| c.clone());
                     self.certificates.entry(c.round).or_insert_with(Vec::new).push(Arc::new(c));
                     c_count += 1;
                 }
@@ -109,11 +120,40 @@ impl Dag {
     }
 
     pub fn insert_certificate(&self, cert: Certificate) -> Result<(), anyhow::Error> {
-        let bytes = postcard::to_allocvec(&cert)?;
-        let key = format!("{}_{}", cert.round, hex::encode(&cert.vertex_id[0..4]));
+        let vertex_id = cert.vertex_id;
+        let round = cert.round;
+
+        // Agregar firmas nuevas al certificado agregado por vértice
+        {
+            let mut entry = self.cert_by_vertex.entry(vertex_id).or_insert_with(|| cert.clone());
+            for sig in &cert.signatures {
+                if !entry.signatures.iter().any(|(pk, _)| pk == &sig.0) {
+                    entry.signatures.push(sig.clone());
+                }
+            }
+        }
+
+        let merged = self.cert_by_vertex.get(&vertex_id).unwrap().clone();
+
+        // Persistir certificado mergado
+        let bytes = postcard::to_allocvec(&merged)?;
+        let key = format!("{}_{}", round, hex::encode(&vertex_id[0..4]));
         self.db_certificates.insert(key, bytes)?;
-        self.certificates.entry(cert.round).or_insert_with(Vec::new).push(Arc::new(cert));
+
+        // Actualizar mapa round→certs (para get_round_certificates y DAG sync)
+        let mut round_certs = self.certificates.entry(round).or_insert_with(Vec::new);
+        let merged_arc = Arc::new(merged.clone());
+        match round_certs.iter().position(|c| c.vertex_id == vertex_id) {
+            Some(i) => round_certs[i] = merged_arc,
+            None    => round_certs.push(merged_arc),
+        }
+
         Ok(())
+    }
+
+    /// Devuelve el certificado agregado para un vértice (con todas las firmas recibidas)
+    pub fn get_cert_for_vertex(&self, vertex_id: &VertexId) -> Option<Certificate> {
+        self.cert_by_vertex.get(vertex_id).map(|c| c.clone())
     }
 
     pub fn get_round_certificates(&self, round: Round) -> Vec<Arc<Certificate>> {
@@ -267,6 +307,13 @@ impl ConsensusEngine {
         self.validators.read().unwrap().len()
     }
 
+    /// Quórum BFT: ceil(2n/3) — para n=1 es 1, para n=3 es 2, para n=4 es 3
+    pub fn quorum_threshold(&self) -> usize {
+        let n = self.validator_count();
+        if n == 0 { return 1; }
+        (2 * n + 2) / 3
+    }
+
     pub fn get_current_round(&self) -> u64 {
         self.current_round.load(Ordering::Relaxed)
     }
@@ -288,34 +335,66 @@ impl ConsensusEngine {
 
     pub fn order_transactions(&self, round: Round) -> Vec<Transaction> {
         let mut total_order = Vec::new();
-        // Necesitamos al menos ronda 2 para tener un target válido
         if round < 2 { return total_order; }
 
-        // Commit all uncommitted vertices from the previous round in deterministic order.
-        // Bullshark BFT cert aggregation requires cross-peer signature gossip — not yet
-        // implemented. We use leader-based auto-commit: commit any vertex from round-1
-        // that has a certificate (i.e. we created or received it). When multi-node cert
-        // aggregation is added, change this to: require (2f+1) signatures before commit.
         let target_round = round - 1;
+        let quorum = self.quorum_threshold();
 
-        // Collect uncommitted vertices from target_round, sorted for determinism
+        // Solo comprometer vértices con quórum 2f+1 de firmas en su certificado.
+        // Para nodo único (n=1) quorum=1 — comportamiento idéntico al anterior.
         let mut to_commit: Vec<VertexId> = self.dag.vertices
             .iter()
-            .filter(|e| e.value().round == target_round && !self.committed_vertices.contains(e.key()))
+            .filter(|e| {
+                if e.value().round != target_round { return false; }
+                if self.committed_vertices.contains(e.key()) { return false; }
+                let sig_count = self.dag.get_cert_for_vertex(e.key())
+                    .map(|c| c.signatures.len())
+                    .unwrap_or(0);
+                sig_count >= quorum
+            })
             .map(|e| *e.key())
             .collect();
-        to_commit.sort(); // deterministic order across nodes
+        to_commit.sort();
 
-        for vid in to_commit {
-            total_order.extend(self.commit_vertex_recursive(&vid));
+        for vid in &to_commit {
+            total_order.extend(self.commit_vertex_recursive(vid));
         }
 
         if !total_order.is_empty() {
-            println!("⚓ Bullshark commit: ronda {} → {} TXs ({} validadores)",
-                target_round, total_order.len(), self.validator_count());
+            println!("⚓ Bullshark commit: ronda {} → {} TXs ({}/{} firmas)",
+                target_round, total_order.len(), quorum, self.validator_count());
+            self.distribute_fees_round();
         }
 
         total_order
+    }
+
+    /// Distribuye el fee pool proporcionalmente entre validadores activos con stake
+    fn distribute_fees_round(&self) {
+        let fee_pool = self.state.get_balance(redflag_core::FEE_POOL_ADDRESS);
+        if fee_pool == 0 { return; }
+
+        let rewards = self.state.staking.distribute_fees(fee_pool);
+        if rewards.is_empty() { return; }
+
+        for (address, amount) in &rewards {
+            let mut acc = self.state.get_account(address).unwrap_or(redflag_state::Account {
+                address: address.clone(),
+                balance: 0,
+                nonce: 0,
+            });
+            acc.balance = acc.balance.saturating_add(*amount);
+            let _ = self.state.save_account_pub(&acc);
+        }
+
+        // Vaciar el fee pool tras distribución
+        let _ = self.state.save_account_pub(&redflag_state::Account {
+            address: redflag_core::FEE_POOL_ADDRESS.into(),
+            balance: 0,
+            nonce: 0,
+        });
+
+        println!("💰 Fees distribuidos: {} RF → {} validadores", fee_pool, rewards.len());
     }
 
     fn commit_vertex_recursive(&self, vertex_id: &VertexId) -> Vec<Transaction> {

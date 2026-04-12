@@ -291,6 +291,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
                                 Ok(NetworkMessage::NewBlock(data)) => {
                                     if let Ok(vertex) = postcard::from_bytes::<redflag_consensus::Vertex>(&data) {
                                         let v_id = vertex.id();
+                                        let v_round = vertex.round;
                                         // Parent-fetching: solicitar padres faltantes
                                         for parent_id in &vertex.parents {
                                             if node.consensus.dag.get_vertex(parent_id).is_none() {
@@ -298,10 +299,40 @@ async fn main() -> Result<(), Box<dyn Error>> {
                                             }
                                         }
                                         let _ = node.consensus.dag.insert_vertex(vertex);
+
+                                        // Firmar el vértice y difundir nuestro certificado (cert aggregation)
+                                        if let Ok(sig) = node.consensus.mempool.keypair.sign(&v_id) {
+                                            let cert = redflag_consensus::Certificate {
+                                                vertex_id: v_id,
+                                                round: v_round,
+                                                signatures: vec![(
+                                                    node.consensus.mempool.keypair.public_key().to_vec(),
+                                                    sig.to_vec(),
+                                                )],
+                                            };
+                                            let _ = node.consensus.dag.insert_certificate(cert.clone());
+                                            let cert_msg = NetworkMessage::NewCertificate(
+                                                postcard::to_allocvec(&cert).unwrap_or_default()
+                                            );
+                                            node.broadcast_message(cert_msg).await.ok();
+                                        }
+
                                         println!("📦 Bloque recibido de {}: {}",
                                             propagation_source,
                                             hex::encode(&v_id[..4])
                                         );
+                                    }
+                                }
+                                Ok(NetworkMessage::NewCertificate(data)) => {
+                                    if let Ok(cert) = postcard::from_bytes::<redflag_consensus::Certificate>(&data) {
+                                        let _ = node.consensus.dag.insert_certificate(cert);
+                                        // Intentar commit si algún vértice alcanzó quórum
+                                        let cur = node.consensus.get_current_round();
+                                        let newly_ordered = node.consensus.order_transactions(cur);
+                                        if !newly_ordered.is_empty() {
+                                            println!("🎊 Quórum 2f+1: {} TXs confirmadas",
+                                                newly_ordered.len());
+                                        }
                                     }
                                 }
                                 _ => {}

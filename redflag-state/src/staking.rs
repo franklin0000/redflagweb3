@@ -136,6 +136,22 @@ impl StakingState {
             .collect()
     }
 
+    /// Devuelve todos los stakes (para snapshot/sync)
+    pub fn get_all_stakes(&self) -> Vec<StakeRecord> {
+        self.tree.iter()
+            .filter_map(|r| r.ok())
+            .filter_map(|(_, b)| postcard::from_bytes::<StakeRecord>(&b).ok())
+            .collect()
+    }
+
+    /// Restaura stakes directamente sin validar (solo para sync inicial)
+    pub fn restore_all_stakes(&self, records: Vec<StakeRecord>) -> Result<(), anyhow::Error> {
+        for record in &records {
+            self.tree.insert(record.address.as_str(), postcard::to_allocvec(record)?)?;
+        }
+        Ok(())
+    }
+
     pub fn stats(&self) -> StakingStats {
         let validators = self.active_validators();
         let total_staked = validators.iter().map(|v| v.amount).sum();

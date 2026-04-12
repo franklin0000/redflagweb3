@@ -183,6 +183,8 @@ pub fn create_router(state: ApiState) -> Router {
         .route("/bridge/info",            get(bridge_info))
         .route("/bridge/chains",          get(bridge_chains))
         .route("/bridge/pubkey",          get(bridge_pubkey))
+        // Sincronización de estado entre nodos
+        .route("/sync/state",             get(sync_state))
         // Market data (CoinGecko / CMC compatible)
         .route("/api/v1/summary",         get(market_summary))
         .route("/api/v1/ticker",          get(market_ticker))
@@ -1383,6 +1385,19 @@ async fn validator_apply(
         "message": "Solicitud recibida. El owner de la red la revisará pronto.",
         "next": "Únete al Discord/Telegram de redflag.web3 para seguimiento.",
     })))
+}
+
+// ── State sync snapshot ───────────────────────────────────────────────────────
+
+async fn sync_state(State(state): State<ApiState>) -> Json<serde_json::Value> {
+    let accounts = state.consensus.state.get_all_accounts();
+    let stakes   = state.consensus.state.staking.get_all_stakes();
+    let round    = state.consensus.get_current_round();
+    Json(serde_json::json!({
+        "round":    round,
+        "accounts": accounts,
+        "stakes":   stakes,
+    }))
 }
 
 // ── Bridge committee pubkey ──────────────────────────────────────────────────

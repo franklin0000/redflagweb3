@@ -323,6 +323,25 @@ impl StateDB {
         self.save_account(account)
     }
 
+    /// Itera todas las cuentas en la base de datos (para snapshots de sincronización)
+    pub fn get_all_accounts(&self) -> Vec<Account> {
+        self.db.iter()
+            .filter_map(|r| r.ok())
+            .filter_map(|(_, b)| postcard::from_bytes::<Account>(&b).ok())
+            .filter(|a| !a.address.is_empty())
+            .collect()
+    }
+
+    /// Restaura un snapshot de cuentas y stakes (sincronización inicial de nodo)
+    pub fn restore_snapshot(&self, accounts: Vec<Account>, stakes: Vec<StakeRecord>) -> Result<(), anyhow::Error> {
+        for acc in &accounts {
+            self.save_account(acc)?;
+        }
+        self.staking.restore_all_stakes(stakes)?;
+        self.db.flush()?;
+        Ok(())
+    }
+
     /// Lista de stakers: (address, amount_staked)
     pub fn get_stakes(&self) -> Vec<(String, u64)> {
         let tree = match self.db.open_tree("stakes") {

@@ -2,10 +2,41 @@ import axios from 'axios';
 
 class RedFlagSDK {
     constructor(nodeUrl = null) {
-        this.nodeUrl = nodeUrl || import.meta.env.VITE_NODE_URL || window.location.origin;
-        this.wsUrl = this.nodeUrl.replace(/^http/, 'ws') + '/ws';
-        this.ws = null;
+        const raw = nodeUrl
+            || import.meta.env.VITE_NODE_URLS
+            || import.meta.env.VITE_NODE_URL
+            || window.location.origin;
+        this._nodeUrls = raw.split(',').map(u => u.trim()).filter(Boolean);
+        this.nodeUrl   = this._nodeUrls[0];
+        this.wsUrl     = this.nodeUrl.replace(/^http/, 'ws') + '/ws';
+        this.ws        = null;
         this.listeners = new Set();
+        // Auto-failover: check node health every 10s, switch if down
+        if (this._nodeUrls.length > 1) this._startHealthCheck();
+    }
+
+    _startHealthCheck() {
+        setInterval(async () => {
+            for (const url of this._nodeUrls) {
+                try {
+                    await axios.get(`${url}/status`, { timeout: 3000 });
+                    // If a higher-priority node recovered, switch back
+                    const idx = this._nodeUrls.indexOf(url);
+                    const cur = this._nodeUrls.indexOf(this.nodeUrl);
+                    if (idx < cur) { this.nodeUrl = url; }
+                    break;
+                } catch {
+                    if (this.nodeUrl === url) {
+                        const idx = this._nodeUrls.indexOf(url);
+                        const next = this._nodeUrls[(idx + 1) % this._nodeUrls.length];
+                        if (next !== this.nodeUrl) {
+                            console.warn(`[SDK] ${url} unreachable, switching to ${next}`);
+                            this.nodeUrl = next;
+                        }
+                    }
+                }
+            }
+        }, 10000);
     }
 
     // ── WebSocket ──

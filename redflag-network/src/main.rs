@@ -1,5 +1,6 @@
 use libp2p::{swarm::SwarmEvent, Multiaddr};
 use std::error::Error;
+use reqwest;
 use redflag_network::{
     RedFlagNode, NetworkMessage, RedFlagBehaviourEvent, rpc,
     identity_manager::NodeIdentity,
@@ -58,6 +59,34 @@ async fn main() -> Result<(), Box<dyn Error>> {
     state_db.ensure_faucet(&faucet_address, 500_000_000_000_000)?; // 500M RF para testnet
     println!("💾 Estado: {}", state_db_path);
 
+    // ── 3b. Sincronización inicial desde nodo bootstrap ──────────────────────
+    if let Ok(sync_url) = env::var("SYNC_FROM") {
+        // Solo sincronizar si el estado local está vacío (primer arranque)
+        let existing_accounts = state_db.get_all_accounts().len();
+        if existing_accounts <= 2 { // solo genesis + faucet
+            println!("🔄 Sincronizando estado desde {}…", sync_url);
+            match reqwest::get(format!("{}/sync/state", sync_url)).await {
+                Ok(resp) => match resp.json::<serde_json::Value>().await {
+                    Ok(data) => {
+                        let accounts: Vec<redflag_state::Account> =
+                            serde_json::from_value(data["accounts"].clone()).unwrap_or_default();
+                        let stakes: Vec<redflag_state::StakeRecord> =
+                            serde_json::from_value(data["stakes"].clone()).unwrap_or_default();
+                        match state_db.restore_snapshot(accounts.clone(), stakes.clone()) {
+                            Ok(()) => println!("✅ Snapshot restaurado: {} cuentas, {} stakes",
+                                accounts.len(), stakes.len()),
+                            Err(e) => eprintln!("⚠️  Error restaurando snapshot: {}", e),
+                        }
+                    }
+                    Err(e) => eprintln!("⚠️  Snapshot inválido desde {}: {}", sync_url, e),
+                },
+                Err(e) => eprintln!("⚠️  No se pudo conectar a {}: {}", sync_url, e),
+            }
+        } else {
+            println!("ℹ️  Estado ya existente ({} cuentas), sync omitido", existing_accounts);
+        }
+    }
+
     // ── 4. WebSocket broadcast channel ──────────────────────────────────────
     let (ws_tx, _ws_rx) = broadcast::channel::<String>(512);
     let ws_tx = Arc::new(ws_tx);
@@ -79,6 +108,31 @@ async fn main() -> Result<(), Box<dyn Error>> {
     ));
     println!("⚡ Consenso: {} validadores activos", consensus.validator_count());
     println!("🔐 Threshold: activo (ML-KEM-768)");
+
+    // ── 5b. Auto-stake para validadores bootstrap ────────────────────────────
+    if let Ok(stake_str) = env::var("AUTO_STAKE_RF") {
+        if let Ok(stake_amount) = stake_str.parse::<u64>() {
+            let validator_addr = hex::encode(consensus.mempool.keypair.public_key());
+            if state_db.staking.get_stake(&validator_addr).is_none() {
+                // Acreditar RF si no tiene balance
+                let mut acc = state_db.get_account(&validator_addr)
+                    .unwrap_or(redflag_state::Account { address: validator_addr.clone(), balance: 0, nonce: 0 });
+                if acc.balance < stake_amount {
+                    acc.balance = stake_amount;
+                    let _ = state_db.save_account_pub(&acc);
+                }
+                match state_db.staking.stake(&validator_addr, stake_amount, 0) {
+                    Ok(()) => {
+                        consensus.add_validator(consensus.mempool.keypair.public_key().to_vec());
+                        println!("🔒 Auto-stake: {} RF → validador {}", stake_amount, &validator_addr[..16]);
+                    }
+                    Err(e) => eprintln!("⚠️  Auto-stake falló: {}", e),
+                }
+            } else {
+                println!("ℹ️  Validador ya tiene stake, auto-stake omitido");
+            }
+        }
+    }
 
     // ── 5. Servidor RPC + Dashboard ──────────────────────────────────────────
     let rpc_port: u16 = env::var("PORT")

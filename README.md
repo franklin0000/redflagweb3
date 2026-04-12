@@ -1,239 +1,124 @@
 # redflag.web3 — Post-Quantum Blockchain
 
-**Producción lista. Multi-chain. DEX nativo.**
+> Chain ID: 2100 · ML-DSA-65 · ML-KEM-768 · Bullshark DAG · Native DEX
 
-redflag.web3 es una blockchain de alto rendimiento con consenso Bullshark DAG, criptografía post-cuántica (ML-DSA-65 + ML-KEM-768), DEX nativo AMM y bridge cross-chain a Ethereum, BSC y Polygon.
-
----
-
-## Inicio Rápido (Producción)
-
-### 1. Requisitos
-```bash
-# Ubuntu 22.04 LTS en un VPS (mínimo 4GB RAM, 2 CPU, 40GB SSD)
-apt update && apt install -y docker.io docker-compose-plugin nginx certbot python3-certbot-nginx
-```
-
-### 2. Clonar y configurar
-```bash
-git clone https://github.com/redflag/redflag2.1
-cd redflag2.1
-cp .env.production.example .env.production
-nano .env.production   # Edita tu dominio y API keys
-```
-
-### 3. Deploy completo (1 comando)
-```bash
-./deploy/scripts/deploy.sh TU_DOMINIO.COM
-# Con monitoring (Prometheus + Grafana):
-./deploy/scripts/deploy.sh TU_DOMINIO.COM --with-monitoring
-```
-
-Esto automaticamente:
-- Obtiene certificado SSL con Let's Encrypt
-- Configura nginx con rate limiting
-- Construye y despliega los contenedores Docker
-- Inicia nodos validadores + bridge relayer
-- Configura auto-renovación SSL
-
-### 4. Desplegar contratos bridge en EVM
-```bash
-# Requiere Foundry: curl -L https://foundry.paradigm.xyz | bash
-./deploy/scripts/deploy_contracts.sh 0xTU_DIRECCION_ETH
-# Actualiza los contratos desplegados en .env.production
-# Reinicia el bridge:
-docker compose restart bridge
-```
+[![Network](https://img.shields.io/badge/network-testnet-orange)](https://redflagweb3-node1.onrender.com/status)
+[![Nodes](https://img.shields.io/badge/nodes-5-green)](https://redflagweb3-node1.onrender.com/validators)
+[![Twitter](https://img.shields.io/badge/Twitter-%40franff546758-black)](https://x.com/franff546758)
+[![Telegram](https://img.shields.io/badge/Telegram-redflag21blockchain-blue)](https://t.me/redflag21blockchain)
 
 ---
 
-## Desarrollo Local
+## What is redflag.web3?
+
+redflag.web3 is a Layer-1 blockchain built in Rust with **post-quantum cryptography** — resistant to attacks from both classical and quantum computers.
+
+| Feature | Details |
+|---------|---------|
+| **Consensus** | Bullshark DAG (BFT, ~200ms finality) |
+| **Signatures** | ML-DSA-65 (FIPS 204 — NIST post-quantum standard) |
+| **Key Exchange** | ML-KEM-768 (FIPS 203 — NIST post-quantum standard) |
+| **Native DEX** | AMM constant-product, 9 trading pairs |
+| **Bridge** | Threshold 2-of-3 multi-sig to Ethereum / BSC / Polygon |
+| **Governance** | On-chain proposals + staked voting |
+| **Chain ID** | 2100 |
+| **Token** | RF (6 decimals) |
+| **Block time** | ~200ms |
+
+---
+
+## Live Network
+
+| Service | URL |
+|---------|-----|
+| Dashboard (PWA) | https://ipfs.io/ipfs/QmSC5VEFHRWT1XTBohtyWwhRMyYMdupwViw8CztgQQfr5U/ |
+| Node 1 (RPC) | https://redflagweb3-node1.onrender.com |
+| Explorer | Dashboard → Explorer tab |
+| Market API | https://redflagweb3-node1.onrender.com/api/v1/ticker |
+
+---
+
+## Run a Node (1 command)
 
 ```bash
-# Backend (Rust)
-cargo build --release
-DATA_DIR=./node1 PORT=8545 P2P_PORT=9000 ./target/release/redflag-network
+curl -sSf https://redflagweb3-node1.onrender.com/install.sh | bash
+```
 
-# Frontend (React)
-cd redflag-web && npm install && npm run dev
+Requirements: Linux or macOS, Rust (auto-installed if missing).
 
-# Bridge (en otra terminal)
-cd redflag-bridge
-ETH_SEPOLIA_RPC=https://... cargo run --release
+### Manual
+
+```bash
+git clone https://github.com/franklin0000/redflagweb3
+cd redflagweb3
+cargo build --release -p redflag-network
+
+DATA_DIR=~/.redflag/data \
+BOOTSTRAP_URL=https://redflagweb3-node1.onrender.com/network/addrs \
+PORT=8545 P2P_PORT=9000 \
+./target/release/redflag-network
 ```
 
 ---
 
-## Arquitectura
+## Become a Validator
 
-```
-┌─────────────────────────────────────────────────────────────┐
-│                    Internet / Users                          │
-└──────────────────────┬──────────────────────────────────────┘
-                       │ HTTPS (nginx + Let's Encrypt)
-┌──────────────────────▼──────────────────────────────────────┐
-│                    Nginx Reverse Proxy                       │
-│   Rate limiting · SSL termination · WebSocket proxy         │
-└──────┬───────────────────────────────────────┬──────────────┘
-       │                                       │
-┌──────▼──────┐                         ┌──────▼──────┐
-│   Node 1    │◄──── P2P libp2p ───────►│   Node 2    │
-│  (Primary)  │   QUIC + TCP + mDNS     │ (Secondary) │
-│  Port 8545  │   Gossipsub + Kademlia  │  Port 8546  │
-└──────┬──────┘                         └─────────────┘
-       │
-       │ HTTP (internal)
-┌──────▼──────┐
-│   Bridge    │◄──── WebSocket ────► Ethereum Sepolia
-│  Relayer    │◄──── HTTP RPC  ────► BSC Testnet
-│  Port 8547  │◄──── HTTP RPC  ────► Polygon Amoy
-└─────────────┘
-```
-
-### Stack tecnológico
-
-| Componente | Tecnología |
-|-----------|-----------|
-| Consenso | Bullshark DAG (Narwhal + Bullshark BFT) |
-| Firma digital | ML-DSA-65 (FIPS 204, post-cuántico) |
-| Encriptación | ML-KEM-768 (FIPS 203, threshold mempool) |
-| P2P | libp2p 0.53 (QUIC + TCP, Gossipsub, Kademlia) |
-| RPC/API | Axum 0.7 + WebSocket tiempo real |
-| DEX | AMM Constant Product (x·y=k, 0.3% fee) |
-| Bridge | EVM lock/unlock con relayer + BridgeRF.sol |
-| Base de datos | Sled (embedded, no-SQL) |
-| Ejecución paralela | Rayon (grupos sin conflictos) |
-| Frontend | React + Vite + Recharts + lucide-react |
-| Monitoring | Prometheus + Grafana |
+1. Run a node
+2. Get your node address from the dashboard
+3. Stake ≥ 10,000 RF to `RedFlag_Protocol_Stake_v1`
+4. Register: `POST https://redflagweb3-node1.onrender.com/validators/apply`
 
 ---
 
-## API Reference
+## Market Data API (CoinGecko compatible)
 
-### Estado
 ```
-GET  /status              → Estado del nodo
-GET  /network/stats       → Estadísticas completas
-GET  /metrics             → Prometheus metrics
-GET  /ws                  → WebSocket tiempo real
-```
-
-### Cuentas
-```
-GET  /balance/:addr       → Saldo RF
-GET  /account/:addr       → Cuenta completa
-GET  /history/:addr       → Historial de TXs
-GET  /tokens/:addr        → Saldo de wrapped tokens (wETH, wBNB, wMATIC)
+GET /api/v1/ticker     — all trading pairs
+GET /api/v1/summary    — 24h summary per pair
+GET /api/v1/orderbook  — AMM order book simulation
+GET /api/v1/trades     — recent swap history
+GET /api/v1/assets     — asset metadata
 ```
 
-### Wallet
-```
-POST /wallet/new          → Generar nuevo keypair ML-DSA-65
-POST /wallet/send         → Enviar TX firmada
-POST /wallet/faucet       → Recibir RF del faucet (cooldown 24h)
-```
+**9 pairs:** RF/wETH · RF/wBNB · RF/wMATIC · RF/wSOL · RF/wAVAX · RF/wARB · RF/wBTC · RF/wUSDC · RF/wUSDT
 
-### DEX
-```
-GET  /dex/pools           → Lista de pools AMM
-GET  /dex/pool/:id        → Detalle de pool
-GET  /dex/pool/:id/history → Historial de swaps
-GET  /dex/pool/:id/prices → Historial de precios
-POST /dex/quote           → Cotizar swap
-POST /dex/swap            → Ejecutar swap
-POST /dex/liquidity/add   → Añadir liquidez
-POST /dex/liquidity/remove → Retirar liquidez
-GET  /dex/position/:addr/:pool → Posición LP
-```
+---
 
-### Bridge
-```
-GET  /bridge/info         → Estado del bridge
-GET  /bridge/chains       → Cadenas EVM soportadas
-POST /bridge/mint         → Mintear wrapped token (solo relayer)
-```
+## Architecture
 
-### Explorer
 ```
-GET  /explorer/search/:q  → Buscar dirección o vértice
-GET  /explorer/tx/:hash   → Detalle de TX por hash
+redflag-network/   ← P2P node + RPC server (main binary)
+redflag-consensus/ ← Bullshark DAG + threshold mempool
+redflag-state/     ← State DB: accounts, DEX, staking, governance
+redflag-crypto/    ← ML-DSA-65, ML-KEM-768, hybrid key exchange
+redflag-bridge/    ← EVM bridge relayer (Ethereum / BSC / Polygon)
+redflag-vm/        ← Smart contract VM (WASM)
+redflag-core/      ← Types, constants, transaction format
+redflag-web/       ← React PWA dashboard
+redflag-sdk/       ← JavaScript SDK (@redflag/sdk)
 ```
 
 ---
 
-## Flujo completo de usuario
+## Security
 
-```
-1. Abrir https://TU_DOMINIO.COM
-   → Crear wallet con frase BIP39 de 12 palabras
-   → Contraseña cifra la clave localmente (AES-256-GCM)
+See [SECURITY.md](./SECURITY.md) for the full internal audit report.
 
-2. Obtener RF del faucet
-   → 1,000 RF gratis (cooldown 24h por dirección)
+- Signatures: ML-DSA-65 (NIST FIPS 204)
+- P2P encryption: ML-KEM-768 (NIST FIPS 203)
+- Bridge: threshold 2-of-3 ML-DSA committee
 
-3. Bridge EVM → RedFlag
-   → Conectar MetaMask en Sepolia/BSC/Polygon
-   → Llamar lock() en contrato BridgeRF con ETH/BNB/MATIC
-   → El relayer detecta el evento y mintea wETH/wBNB/wMATIC
-
-4. Trading en el DEX
-   → Ir a "DEX Trading" en la app
-   → Seleccionar pool: RF/wETH, RF/wBNB, RF/wMATIC
-   → Hacer swap en tiempo real con precio actualizado
-   → Fee: 0.3% (igual a Uniswap V2)
-
-5. Proveer liquidez
-   → Add Liquidity → depositar RF + wETH
-   → Recibir LP tokens
-   → Ganar 0.3% de cada swap proporcional a tu posición
-
-6. Bridge RedFlag → EVM
-   → Enviar TX a RedFlag_Bridge_Lock_v1 con datos EVM
-   → El relayer llama unlock() en el contrato EVM
-   → Recibes ETH/BNB/MATIC en tu wallet EVM
-```
+Report vulnerabilities via [Telegram](https://t.me/redflag21blockchain) before public disclosure.
 
 ---
 
-## Seguridad
+## Community
 
-- **Post-cuántico**: ML-DSA-65 y ML-KEM-768 resistentes a ataques de computadoras cuánticas
-- **Anti-MEV**: Threshold encrypted mempool — las TXs se descifran solo después del commit
-- **Rate limiting**: 60 req/min por IP, cooldown 24h en faucet
-- **HTTPS**: TLS 1.3 obligatorio en producción
-- **Wallet**: Clave privada nunca sale del navegador (cifrada con AES-256-GCM + PBKDF2 200K iter)
-- **Bridge**: Nonces únicos previenen replay attacks, daily limit en contratos EVM
-- **Docker**: Procesos corren como usuarios no-root
+| | |
+|-|-|
+| 𝕏 Twitter | [@franff546758](https://x.com/franff546758) |
+| Telegram | [redflag21blockchain](https://t.me/redflag21blockchain) |
 
 ---
 
-## Monitoring
-
-Prometheus scrape en `http://nodo:8545/metrics`:
-
-```
-redflag_round             — Ronda de consenso actual
-redflag_tx_count          — TXs confirmadas totales
-redflag_committed_vertices — Vértices Bullshark confirmados
-redflag_pending_txs       — TXs en mempool
-redflag_validator_count   — Validadores activos
-redflag_fee_pool_balance  — Balance del fee pool
-redflag_faucet_balance    — RF restantes en el faucet
-redflag_uptime_seconds    — Uptime del nodo
-redflag_account_count     — Cuentas con balance
-redflag_threshold_round   — Ronda de rotación de llaves ML-KEM
-```
-
-Importa `monitoring/grafana_dashboard.json` en Grafana para el dashboard completo.
-
----
-
-## Variables de entorno
-
-Ver `.env.production.example` para la lista completa.
-
----
-
-## Licencia
-
-MIT OR Apache-2.0
+MIT License

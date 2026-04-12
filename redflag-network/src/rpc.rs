@@ -1517,8 +1517,9 @@ async fn market_summary(State(state): State<ApiState>) -> Json<serde_json::Value
     for (token, _name, _ref_price) in MARKET_PAIRS {
         let key = format!("RF_{}", token);
         let (price, vol_rf, vol_b) = if let Some(p) = live.get(*token) {
-            let pr = p.price() as f64 / 1_000_000.0;
-            (pr, p.volume_rf as f64 / 1_000_000.0, p.volume_rf as f64 / 1_000_000.0 * pr)
+            let pr = p.price();  // already f64: reserve_b / reserve_rf
+            let vrf = p.volume_rf as f64 / 1_000_000.0;
+            (pr, vrf, vrf * pr)
         } else {
             (0.0, 0.0, 0.0)
         };
@@ -1552,7 +1553,7 @@ async fn market_ticker(State(state): State<ApiState>) -> Json<serde_json::Value>
     for (token, name, _ref_price) in MARKET_PAIRS {
         let key = format!("RF_{}", token);
         let (price, volume) = if let Some(p) = live.get(*token) {
-            (p.price() as f64 / 1_000_000.0, p.volume_rf as f64 / 1_000_000.0)
+            (p.price(), p.volume_rf as f64 / 1_000_000.0)
         } else {
             (0.0, 0.0)
         };

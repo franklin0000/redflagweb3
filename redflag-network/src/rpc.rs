@@ -449,8 +449,10 @@ async fn get_network_stats(State(state): State<ApiState>) -> Json<serde_json::Va
     let faucet_bal = state.consensus.state.get_balance(&state.faucet_address);
     let fee_pool = state.consensus.state.get_balance("RedFlag_Protocol_FeePool");
     let genesis_bal = state.consensus.state.get_balance("RedFlag_Genesis_Alpha");
-    let total_issued: u64 = 1_500_000_000; // genesis + faucet
-    let circulating = total_issued.saturating_sub(faucet_bal).saturating_sub(genesis_bal);
+    let total_issued: u64 = 1_500_000_000; // genesis + faucet (in RF)
+    let circulating = total_issued
+        .saturating_sub(faucet_bal / 1_000_000)
+        .saturating_sub(genesis_bal / 1_000_000);
     let uptime = now_secs().saturating_sub(state.node_start_time);
     let (threshold_round, ek) = state.consensus.threshold_mempool.get_current_ek();
 
@@ -495,8 +497,11 @@ async fn supply_total() -> String {
 async fn supply_circulating(State(state): State<ApiState>) -> String {
     let faucet_bal = state.consensus.state.get_balance(&state.faucet_address);
     let genesis_bal = state.consensus.state.get_balance("RedFlag_Genesis_Alpha");
+    // Balances are stored in micro-RF (6 decimals); convert to RF before subtracting
+    let faucet_rf = faucet_bal / 1_000_000;
+    let genesis_rf = genesis_bal / 1_000_000;
     let total_issued: u64 = 1_500_000_000;
-    total_issued.saturating_sub(faucet_bal).saturating_sub(genesis_bal).to_string()
+    total_issued.saturating_sub(faucet_rf).saturating_sub(genesis_rf).to_string()
 }
 
 // ── Explorer Search ──────────────────────────────────────────────────────────

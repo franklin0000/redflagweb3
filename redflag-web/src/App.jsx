@@ -522,7 +522,7 @@ function DashboardPage({stats,vertices,mempool,roundEk,tpsHist,online}) {
 // ─────────────────────────────────────────────
 // EXPLORER PAGE
 // ─────────────────────────────────────────────
-function ExplorerPage({initialQuery=''}) {
+function ExplorerPage({initialQuery='', wsData}) {
   const [q,setQ] = useState(initialQuery);
   const [result,setResult] = useState(null);
   const [loading,setLoading] = useState(false);
@@ -530,13 +530,11 @@ function ExplorerPage({initialQuery=''}) {
   const [selectedVertex,setSelectedVertex] = useState(null);
   const [tab,setTab] = useState('blocks'); // 'blocks' | 'search'
 
-  // Actualización en tiempo real de vértices
-  useEffect(()=>{
-    const load = ()=>sdk.getVertices().then(v=>setVertices(v||[])).catch(()=>{});
-    load();
-    const id = setInterval(load, 4000);
-    return ()=>clearInterval(id);
-  },[]);
+  const loadVertices = useCallback(()=>sdk.getVertices().then(v=>setVertices(v||[])).catch(()=>{}), []);
+
+  // Fallback poll 30s; WS new_block fires instantly
+  useEffect(()=>{ loadVertices(); const id=setInterval(loadVertices,30000); return()=>clearInterval(id); },[loadVertices]);
+  useEffect(()=>{ if(wsData?.type==='new_block') loadVertices(); },[wsData, loadVertices]);
 
   useEffect(()=>{
     if(!initialQuery) return;
@@ -875,7 +873,7 @@ function SettingsPage({wallet,onLogout}) {
 // ─────────────────────────────────────────────
 // DEX PAGE
 // ─────────────────────────────────────────────
-function DexPage({ wallet }) {
+function DexPage({ wallet, wsData }) {
   const [pools, setPools]       = useState([]);
   const [selPool, setSelPool]   = useState('RF_wETH');
   const [tab, setTab]           = useState('swap');   // swap | liquidity | pools
@@ -911,7 +909,8 @@ function DexPage({ wallet }) {
     } catch {}
   }, [selPool, wallet]);
 
-  useEffect(() => { fetchData(); const iv = setInterval(fetchData, 5000); return () => clearInterval(iv); }, [fetchData]);
+  useEffect(() => { fetchData(); const iv = setInterval(fetchData, 30000); return () => clearInterval(iv); }, [fetchData]);
+  useEffect(() => { if(wsData?.type==='dex_swap'||wsData?.type==='dex_liquidity'||wsData?.type==='new_block') fetchData(); }, [wsData, fetchData]);
 
   // Auto-quote
   useEffect(() => {
@@ -1207,7 +1206,7 @@ function encodelock(rfAddress) {
 const RF_UNIT = 1_000_000; // 1 RF = 1,000,000 microRF
 const MIN_STAKE_RF = 10_000; // mínimo 10,000 RF para ser validador
 
-function StakingPage({ wallet }) {
+function StakingPage({ wallet, wsData }) {
   const [info, setInfo]       = useState(null);
   const [stakes, setStakes]   = useState([]);
   const [total, setTotal]     = useState(0);
@@ -1235,7 +1234,8 @@ function StakingPage({ wallet }) {
     } catch {}
   }, [wallet]);
 
-  useEffect(() => { fetchData(); const iv = setInterval(fetchData, 8000); return () => clearInterval(iv); }, [fetchData]);
+  useEffect(() => { fetchData(); const iv = setInterval(fetchData, 30000); return () => clearInterval(iv); }, [fetchData]);
+  useEffect(() => { if(wsData?.type==='new_block'||wsData?.type==='staking_stake') fetchData(); }, [wsData, fetchData]);
 
   // Estimar recompensas diarias: 1 RF + avg TXs por vértice, 5 vértices/seg
   useEffect(() => {
@@ -1602,7 +1602,7 @@ function BridgePage({ wallet }) {
 // ─────────────────────────────────────────────
 // GOVERNANCE PAGE
 // ─────────────────────────────────────────────
-function GovernancePage({wallet}) {
+function GovernancePage({wallet, wsData}) {
   const [proposals, setProposals] = useState([]);
   const [prices, setPrices] = useState([]);
   const [loading, setLoading] = useState(false);
@@ -1610,11 +1610,12 @@ function GovernancePage({wallet}) {
   const [form, setForm] = useState({title:'',description:'',param:'MinFee',new_value:''});
   const [msg, setMsg] = useState(null);
 
-  const load = ()=>{
+  const load = useCallback(()=>{
     sdk.get('/governance/proposals').then(r=>setProposals(r.proposals||[])).catch(()=>{});
     sdk.get('/oracle/prices').then(r=>setPrices(r.prices||[])).catch(()=>{});
-  };
-  useEffect(()=>{ load(); const id=setInterval(load,10000); return()=>clearInterval(id); },[]);
+  },[]);
+  useEffect(()=>{ load(); const id=setInterval(load,30000); return()=>clearInterval(id); },[load]);
+  useEffect(()=>{ if(wsData?.type==='new_block') load(); },[wsData, load]);
 
   const propose = async(e)=>{
     e.preventDefault();
@@ -1791,15 +1792,15 @@ export default function App() {
 
   useEffect(()=>{
     fetchData();
-    const iv = setInterval(fetchData,4000);
+    const iv = setInterval(fetchData,15000); // fallback: WS drives updates
     return ()=>clearInterval(iv);
   },[fetchData]);
 
-  // WebSocket
+  // WebSocket — refresh stats on every network event
   useEffect(()=>{
-    const unsub = sdk.connectWS(data=>setWsData(data));
+    const unsub = sdk.connectWS(data=>{ setWsData(data); fetchData(); });
     return ()=>{ if(typeof unsub==='function') unsub(); };
-  },[]);
+  },[fetchData]);
 
   // Search redirect
   const handleSearch = e=>{
@@ -1867,11 +1868,11 @@ export default function App() {
         <div className="page">
           {page==='wallet'    && <WalletPage    wallet={wallet} wsData={wsData}/>}
           {page==='dashboard' && <DashboardPage stats={stats} vertices={vertices} mempool={mempool} roundEk={roundEk} tpsHist={tpsHist} online={online}/>}
-          {page==='staking'   && <StakingPage   wallet={wallet}/>}
+          {page==='staking'   && <StakingPage   wallet={wallet} wsData={wsData}/>}
           {page==='bridge'    && <BridgePage    wallet={wallet}/>}
-          {page==='dex'       && <DexPage       wallet={wallet}/>}
-          {page==='explorer'  && <ExplorerPage  initialQuery={searchQuery}/>}
-          {page==='governance'&& <GovernancePage wallet={wallet}/>}
+          {page==='dex'       && <DexPage       wallet={wallet} wsData={wsData}/>}
+          {page==='explorer'  && <ExplorerPage  initialQuery={searchQuery} wsData={wsData}/>}
+          {page==='governance'&& <GovernancePage wallet={wallet} wsData={wsData}/>}
           {page==='network'   && <NetworkPage   stats={stats} online={online}/>}
           {page==='settings'  && <SettingsPage  wallet={wallet} onLogout={()=>{ setWallet(null); }}/>}
         </div>

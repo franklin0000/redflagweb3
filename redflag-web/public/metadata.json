@@ -3,12 +3,12 @@
   "symbol": "RF",
   "name": "RedFlag",
   "description": "redflag.web3 is a quantum-resistant blockchain using ML-DSA-65 (post-quantum signatures) and ML-KEM-768 (post-quantum key exchange) with Bullshark DAG consensus achieving ~10,000 TPS. The RF token is the native currency used for transactions, staking, and governance.",
-  "logo": "https://redflagweb3-app.onrender.com/logo.png",
-  "logo_png": "https://redflagweb3-app.onrender.com/logo.png",
-  "logo_svg": "https://redflagweb3-app.onrender.com/logo.svg",
-  "website": "https://redflagweb3-app.onrender.com",
+  "logo": "https://ipfs.io/ipfs/QmSC5VEFHRWT1XTBohtyWwhRMyYMdupwViw8CztgQQfr5U/logo.png",
+  "logo_png": "https://ipfs.io/ipfs/QmSC5VEFHRWT1XTBohtyWwhRMyYMdupwViw8CztgQQfr5U/logo.png",
+  "logo_svg": "https://ipfs.io/ipfs/QmSC5VEFHRWT1XTBohtyWwhRMyYMdupwViw8CztgQQfr5U/logo.svg",
+  "website": "https://ipfs.io/ipfs/QmSC5VEFHRWT1XTBohtyWwhRMyYMdupwViw8CztgQQfr5U/",
   "explorer": "https://redflagweb3-node1.onrender.com",
-  "whitepaper": "https://redflagweb3-app.onrender.com/whitepaper",
+  "whitepaper": "https://ipfs.io/ipfs/QmSC5VEFHRWT1XTBohtyWwhRMyYMdupwViw8CztgQQfr5U/whitepaper",
   "chain_id": 2100,
   "decimals": 6,
   "max_supply": 1000000000,
@@ -19,7 +19,8 @@
   "cryptography": ["ML-DSA-65", "ML-KEM-768", "X25519"],
   "features": ["post-quantum", "dex", "bridge", "staking", "evm-bridge"],
   "social": {
-    "twitter": "https://twitter.com/redflagweb3",
+    "twitter": "https://x.com/franff546758",
+    "telegram": "https://t.me/redflag21blockchain",
     "github": "https://github.com/franklin0000/redflagweb3"
   },
   "platforms": {

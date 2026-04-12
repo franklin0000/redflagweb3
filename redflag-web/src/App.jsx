@@ -2002,6 +2002,7 @@ function DocsPage() {
               {[
                 {label:'𝕏 Twitter',  href:'https://x.com/franff546758',          color:'var(--fg)'},
                 {label:'Telegram',   href:'https://t.me/redflag21blockchain',      color:'var(--cyan)'},
+                {label:'Website',    href:'https://ipfs.io/ipfs/QmSC5VEFHRWT1XTBohtyWwhRMyYMdupwViw8CztgQQfr5U/', color:'var(--green)'},
                 {label:'GitHub',     href:'https://github.com/franklin0000/redflagweb3', color:'var(--txm)'},
               ].map(l=>(
                 <a key={l.label} href={l.href} target="_blank" rel="noreferrer"

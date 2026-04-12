@@ -1569,7 +1569,7 @@ async fn market_ticker(State(state): State<ApiState>) -> Json<serde_json::Value>
             "ask":         if price > 0.0 { price * 1.001 } else { 0.0 },
             "volume":      volume,
             "isFrozen":    "0",
-            "base_logo":   "https://redflagweb3-app.onrender.com/logo.png",
+            "base_logo":   "https://ipfs.io/ipfs/QmSC5VEFHRWT1XTBohtyWwhRMyYMdupwViw8CztgQQfr5U/logo.png",
         }));
     }
     Json(serde_json::json!({ "timestamp": now, "tickers": tickers }))
@@ -1614,8 +1614,8 @@ async fn market_assets() -> Json<serde_json::Value> {
             "taker_fee":       "0.3",
             "chain":           "redflag.web3",
             "chain_id":        2100,
-            "logo":            "https://redflagweb3-app.onrender.com/logo.png",
-            "website":         "https://redflagweb3-app.onrender.com",
+            "logo":            "https://ipfs.io/ipfs/QmSC5VEFHRWT1XTBohtyWwhRMyYMdupwViw8CztgQQfr5U/logo.png",
+            "website":         "https://ipfs.io/ipfs/QmSC5VEFHRWT1XTBohtyWwhRMyYMdupwViw8CztgQQfr5U/",
         },
         "wETH": {
             "name":          "Wrapped ETH",
@@ -1701,7 +1701,7 @@ async fn staking_info() -> Json<serde_json::Value> {
         "reward_per_vertex": "1 RF base + 0.1 RF por TX incluida",
         "round_interval_ms": 200,
         "how_to_stake": {
-            "step1": "Instala el nodo: curl -sSf https://redflagweb3-app.onrender.com/install.sh | bash",
+            "step1": "Instala el nodo: curl -sSf https://ipfs.io/ipfs/QmSC5VEFHRWT1XTBohtyWwhRMyYMdupwViw8CztgQQfr5U//install.sh | bash",
             "step2": "Consigue la direccion de tu nodo en el dashboard",
             "step3": "Envia RF a la direccion STAKE_ADDRESS desde tu wallet de nodo",
             "step4": "El nodo se registra automaticamente como validador",

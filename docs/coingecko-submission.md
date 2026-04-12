@@ -18,7 +18,7 @@
 | **Circulating Supply** | ≈ 1,500,000,000 RF (genesis + faucet) |
 | **Decimal Places** | 6 |
 | **Contract Address** | N/A — native coin, no ERC-20 contract |
-| **Website** | https://redflagweb3-app.onrender.com |
+| **Website** | https://ipfs.io/ipfs/QmSC5VEFHRWT1XTBohtyWwhRMyYMdupwViw8CztgQQfr5U/ |
 | **Whitepaper / Docs** | https://github.com/franklin0000/redflagweb3/blob/main/README.md |
 | **GitHub** | https://github.com/franklin0000/redflagweb3 |
 
@@ -90,16 +90,16 @@ RF_wBTC, RF_wUSDC, RF_wUSDT) are always returned.
 | Twitter / X | https://x.com/franff546758 |
 | Telegram | https://t.me/redflag21blockchain |
 | GitHub | https://github.com/franklin0000/redflagweb3 |
-| Website | https://redflagweb3-app.onrender.com |
+| Website | https://ipfs.io/ipfs/QmSC5VEFHRWT1XTBohtyWwhRMyYMdupwViw8CztgQQfr5U/ |
 | Node installer | `curl -sSf https://redflagweb3-node1.onrender.com/install.sh | bash` |
-| Explorer | https://redflagweb3-app.onrender.com (tab: Explorer) |
+| Explorer | https://ipfs.io/ipfs/QmSC5VEFHRWT1XTBohtyWwhRMyYMdupwViw8CztgQQfr5U/ (tab: Explorer) |
 | Validator registration | `POST https://redflagweb3-node1.onrender.com/validators/apply` |
 
 ---
 
 ## 5. Logo
 
-- **URL:** https://redflagweb3-app.onrender.com/logo.png
+- **URL:** https://ipfs.io/ipfs/QmSC5VEFHRWT1XTBohtyWwhRMyYMdupwViw8CztgQQfr5U//logo.png
 - **Format:** PNG, transparent background
 - **Required sizes:** 200x200px (submit separately as file upload)
 

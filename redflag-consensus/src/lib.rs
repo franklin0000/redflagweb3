@@ -9,6 +9,11 @@ pub mod threshold;
 use std::collections::HashSet;
 use sled::{Db, Tree};
 
+/// Rondas consecutivas sin producir antes de aplicar slash
+pub const SLASH_MISS_ROUNDS: u64 = 20;
+/// Porcentaje del stake que se pierde por slash (5%)
+pub const SLASH_PERCENT: u64 = 5;
+
 /// Cada cuántas rondas se reduce a la mitad la recompensa por vértice
 pub const HALVING_INTERVAL: u64 = 1_000;
 /// Recompensa base por vértice (1 RF = 1_000_000 microRF)
@@ -261,10 +266,11 @@ pub struct ConsensusEngine {
     pub mempool: Arc<Mempool>,
     pub state: Arc<StateDB>,
     pub threshold_mempool: Arc<threshold::ThresholdMempool>,
-    /// Validadores activos — actualizable en tiempo de ejecución
     pub validators: Arc<std::sync::RwLock<Vec<Vec<u8>>>>,
     current_round: AtomicU64,
     pub committed_vertices: DashSet<VertexId>,
+    /// Última ronda en que cada validador produjo un vértice (para slashing)
+    pub validator_last_round: DashMap<Vec<u8>, u64>,
     db_metadata: Tree,
 }
 
@@ -299,6 +305,7 @@ impl ConsensusEngine {
             validators: Arc::new(std::sync::RwLock::new(validators)),
             current_round: AtomicU64::new(current_round),
             committed_vertices,
+            validator_last_round: DashMap::new(),
             db_metadata,
         };
 
@@ -379,12 +386,69 @@ impl ConsensusEngine {
         }
 
         if !total_order.is_empty() {
+            // Actualizar última ronda activa para validadores que produjeron en target_round
+            for vid in &to_commit {
+                if let Some(v) = self.dag.get_vertex(vid) {
+                    if !v.author.is_empty() {
+                        self.validator_last_round.insert(v.author.clone(), target_round);
+                    }
+                }
+            }
+
             println!("⚓ Bullshark commit: ronda {} → {} TXs ({}/{} firmas)",
                 target_round, total_order.len(), quorum, self.validator_count());
             self.distribute_fees_round();
+            self.apply_slashing(round);
+            self.finalize_governance(round);
         }
 
         total_order
+    }
+
+    /// Penaliza validadores inactivos — slash del SLASH_PERCENT% si superan SLASH_MISS_ROUNDS
+    fn apply_slashing(&self, current_round: u64) {
+        let validators = self.validators.read().unwrap().clone();
+        for pubkey in &validators {
+            let last = self.validator_last_round.get(pubkey).map(|r| *r).unwrap_or(0);
+            if current_round > last + SLASH_MISS_ROUNDS && last > 0 {
+                let addr = hex::encode(pubkey);
+                if let Some(stake) = self.state.staking.get_stake(&addr) {
+                    if stake.unbonding_at == 0 {
+                        let slash = stake.amount * SLASH_PERCENT / 100;
+                        if slash > 0 {
+                            // Reducir stake
+                            let new_amount = stake.amount.saturating_sub(slash);
+                            let _ = self.state.staking.slash(&addr, slash);
+                            // Enviar slashed al fee pool
+                            let mut pool = self.state.get_account(redflag_core::FEE_POOL_ADDRESS)
+                                .unwrap_or(redflag_state::Account { address: redflag_core::FEE_POOL_ADDRESS.into(), balance: 0, nonce: 0 });
+                            pool.balance = pool.balance.saturating_add(slash);
+                            let _ = self.state.save_account_pub(&pool);
+                            eprintln!("⚠️  Slash: {} RF deducidos de {} (inactivo {} rondas)",
+                                slash, &addr[..12], current_round - last);
+                            // Eliminar de validadores si queda por debajo del mínimo
+                            if new_amount < redflag_state::MIN_STAKE {
+                                let mut vals = self.validators.write().unwrap();
+                                vals.retain(|v| v != pubkey);
+                                eprintln!("🚫 Validador {} removido (stake insuficiente post-slash)", &addr[..12]);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /// Finaliza propuestas de governance cuyo período de votación expiró
+    fn finalize_governance(&self, current_round: u64) {
+        let stats = self.state.staking.stats();
+        let finalized = self.state.governance.finalize_expired(current_round, stats.total_staked);
+        for prop in finalized {
+            if prop.passed {
+                println!("✅ Governance: propuesta #{} '{}' APROBADA", prop.id, prop.title);
+                // Aquí se pueden aplicar cambios de parámetros en el futuro
+            }
+        }
     }
 
     /// Distribuye el fee pool entre validadores activos (quema 20%, distribuye 80%)

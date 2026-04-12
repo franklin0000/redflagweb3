@@ -15,6 +15,12 @@ pub use tokens::{TokenLedger, TokenBalance, SUPPORTED_TOKENS, TOKEN_DECIMALS};
 pub mod staking;
 pub use staking::{StakingState, StakeRecord, StakingStats, MIN_STAKE};
 
+pub mod governance;
+pub use governance::{GovernanceState, Proposal, GovernanceParam};
+
+pub mod oracle;
+pub use oracle::{OracleState, OraclePrice};
+
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct Account {
     pub address: String,
@@ -24,13 +30,15 @@ pub struct Account {
 
 pub struct StateDB {
     db: Db,
-    tx_history: Tree,   // key = timestamp_sender → TX bytes (per-address lookup)
-    tx_index: Tree,     // key = tx_hash → TX bytes  (global lookup by hash)
-    tx_counter: Tree,   // key = "total" → u64
+    tx_history: Tree,
+    tx_index: Tree,
+    tx_counter: Tree,
     pub vm: Option<ContractVm>,
     pub dex: DexState,
     pub tokens: TokenLedger,
     pub staking: StakingState,
+    pub governance: GovernanceState,
+    pub oracle: OracleState,
 }
 
 impl StateDB {
@@ -55,10 +63,18 @@ impl StateDB {
         let staking_tree = db.open_tree("staking")?;
         let staking = StakingState::new(staking_tree);
 
+        // Governance on-chain
+        let governance_tree = db.open_tree("governance")?;
+        let governance = GovernanceState::new(governance_tree);
+
+        // Oracle de precios
+        let oracle_tree = db.open_tree("oracle")?;
+        let oracle = OracleState::new(oracle_tree);
+
         let vm_path = format!("{}_vm", path);
         let vm = ContractVm::new(&vm_path).ok();
 
-        let state = Self { db, tx_history, tx_index, tx_counter, vm, dex, tokens, staking };
+        let state = Self { db, tx_history, tx_index, tx_counter, vm, dex, tokens, staking, governance, oracle };
         state.ensure_genesis()?;
         state.ensure_dex_pools()?;
         Ok(state)

@@ -197,6 +197,13 @@ pub fn create_router(state: ApiState) -> Router {
         .route("/staking/unstake",        post(staking_unstake))
         .route("/staking/withdraw",       post(staking_withdraw))
         .route("/staking/rewards/:addr",  get(staking_rewards))
+        // Governance on-chain
+        .route("/governance/proposals",   get(governance_proposals))
+        .route("/governance/propose",     post(governance_propose))
+        .route("/governance/vote",        post(governance_vote))
+        // Oracle de precios
+        .route("/oracle/prices",          get(oracle_prices))
+        .route("/oracle/submit",          post(oracle_submit))
         // WebSocket tiempo real
         .route("/ws",               get(ws_handler))
         // Métricas Prometheus
@@ -1620,6 +1627,8 @@ async fn staking_stake(
 
     match state.consensus.state.staking.stake(&address, req.amount, current_round) {
         Ok(_) => {
+            // Registrar como validador activo en el motor de consenso
+            state.consensus.add_validator(kp.public_key().to_vec());
             emit(&state.ws_tx, "staking_stake", serde_json::json!({
                 "address": &address[..16.min(address.len())],
                 "amount": req.amount,
@@ -1628,6 +1637,7 @@ async fn staking_stake(
                 "success": true,
                 "message": format!("{} RF bloqueados como stake en ronda {}", req.amount, current_round),
                 "address": &address[..16.min(address.len())],
+                "validator_registered": true,
             })))
         }
         Err(e) => (StatusCode::BAD_REQUEST, Json(serde_json::json!({"error": e.to_string()}))),
@@ -1721,4 +1731,157 @@ async fn staking_rewards(
         "estimated_reward": estimated_share,
         "total_staked": stats.total_staked,
     }))
+}
+
+// ── Governance endpoints ──────────────────────────────────────────────────────
+
+async fn governance_proposals(State(state): State<ApiState>) -> Json<serde_json::Value> {
+    let round = state.consensus.get_current_round();
+    let proposals = state.consensus.state.governance.list();
+    let active = state.consensus.state.governance.active(round);
+    Json(serde_json::json!({
+        "current_round": round,
+        "voting_period_rounds": redflag_state::governance::VOTING_PERIOD_ROUNDS,
+        "quorum_percent": redflag_state::governance::QUORUM_PERCENT,
+        "total": proposals.len(),
+        "active_count": active.len(),
+        "proposals": proposals.iter().map(|p| serde_json::json!({
+            "id": p.id,
+            "title": p.title,
+            "description": p.description,
+            "param": format!("{:?}", p.param),
+            "new_value": p.new_value,
+            "votes_for": p.votes_for,
+            "votes_against": p.votes_against,
+            "created_round": p.created_round,
+            "voting_end_round": p.voting_end_round,
+            "executed": p.executed,
+            "passed": p.passed,
+            "voter_count": p.voters.len(),
+            "status": if p.executed { if p.passed { "passed" } else { "rejected" } }
+                      else if round <= p.voting_end_round { "active" } else { "pending_finalization" },
+        })).collect::<Vec<_>>(),
+    }))
+}
+
+#[derive(serde::Deserialize)]
+struct ProposeRequest {
+    private_key_hex: String,
+    title: String,
+    description: String,
+    param: String,
+    new_value: u64,
+}
+
+async fn governance_propose(
+    State(state): State<ApiState>,
+    Json(req): Json<ProposeRequest>,
+) -> (StatusCode, Json<serde_json::Value>) {
+    use redflag_crypto::SigningKeyPair;
+    let kp_bytes = match hex::decode(&req.private_key_hex) {
+        Ok(b) => b,
+        Err(_) => return (StatusCode::BAD_REQUEST, Json(serde_json::json!({"error":"private_key_hex inválido"}))),
+    };
+    let kp: SigningKeyPair = match postcard::from_bytes(&kp_bytes) {
+        Ok(k) => k,
+        Err(_) => return (StatusCode::BAD_REQUEST, Json(serde_json::json!({"error":"keypair inválido"}))),
+    };
+    let address = hex::encode(kp.public_key());
+    let stake = state.consensus.state.staking.get_stake(&address);
+    if stake.is_none() {
+        return (StatusCode::FORBIDDEN, Json(serde_json::json!({"error":"Necesitas stake activo para proponer"})));
+    }
+
+    let param = match req.param.as_str() {
+        "MinFee"          => redflag_state::GovernanceParam::MinFee,
+        "HalvingInterval" => redflag_state::GovernanceParam::HalvingInterval,
+        "MinStake"        => redflag_state::GovernanceParam::MinStake,
+        "FeeBurnPercent"  => redflag_state::GovernanceParam::FeeBurnPercent,
+        "UnstakeDelay"    => redflag_state::GovernanceParam::UnstakeDelay,
+        other             => redflag_state::GovernanceParam::Custom(other.to_string()),
+    };
+
+    let round = state.consensus.get_current_round();
+    match state.consensus.state.governance.create_proposal(address, req.title, req.description, param, req.new_value, round) {
+        Ok(id) => (StatusCode::OK, Json(serde_json::json!({"success":true,"proposal_id":id,"voting_end_round":round + redflag_state::governance::VOTING_PERIOD_ROUNDS}))),
+        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"error":e.to_string()}))),
+    }
+}
+
+#[derive(serde::Deserialize)]
+struct VoteRequest {
+    private_key_hex: String,
+    proposal_id: u64,
+    vote: bool, // true = SÍ, false = NO
+}
+
+async fn governance_vote(
+    State(state): State<ApiState>,
+    Json(req): Json<VoteRequest>,
+) -> (StatusCode, Json<serde_json::Value>) {
+    use redflag_crypto::SigningKeyPair;
+    let kp_bytes = match hex::decode(&req.private_key_hex) {
+        Ok(b) => b,
+        Err(_) => return (StatusCode::BAD_REQUEST, Json(serde_json::json!({"error":"private_key_hex inválido"}))),
+    };
+    let kp: SigningKeyPair = match postcard::from_bytes(&kp_bytes) {
+        Ok(k) => k,
+        Err(_) => return (StatusCode::BAD_REQUEST, Json(serde_json::json!({"error":"keypair inválido"}))),
+    };
+    let address = hex::encode(kp.public_key());
+    let stake_weight = state.consensus.state.staking.get_stake(&address)
+        .map(|s| s.amount).unwrap_or(0);
+
+    let round = state.consensus.get_current_round();
+    match state.consensus.state.governance.vote(req.proposal_id, &address, req.vote, stake_weight, round) {
+        Ok(_) => (StatusCode::OK, Json(serde_json::json!({"success":true,"vote":req.vote,"stake_weight":stake_weight}))),
+        Err(e) => (StatusCode::BAD_REQUEST, Json(serde_json::json!({"error":e.to_string()}))),
+    }
+}
+
+// ── Oracle endpoints ──────────────────────────────────────────────────────────
+
+async fn oracle_prices(State(state): State<ApiState>) -> Json<serde_json::Value> {
+    let prices = state.consensus.state.oracle.all_prices();
+    Json(serde_json::json!({
+        "pairs": redflag_state::oracle::PAIRS,
+        "prices": prices.iter().map(|p| serde_json::json!({
+            "pair": p.pair,
+            "price_usd": p.price_usd_micro as f64 / 1_000_000.0,
+            "price_usd_micro": p.price_usd_micro,
+            "submissions": p.submissions,
+            "last_updated_round": p.last_updated_round,
+        })).collect::<Vec<_>>(),
+    }))
+}
+
+#[derive(serde::Deserialize)]
+struct OracleSubmitRequest {
+    private_key_hex: String,
+    pair: String,
+    price_usd_micro: u64,
+}
+
+async fn oracle_submit(
+    State(state): State<ApiState>,
+    Json(req): Json<OracleSubmitRequest>,
+) -> (StatusCode, Json<serde_json::Value>) {
+    use redflag_crypto::SigningKeyPair;
+    let kp_bytes = match hex::decode(&req.private_key_hex) {
+        Ok(b) => b,
+        Err(_) => return (StatusCode::BAD_REQUEST, Json(serde_json::json!({"error":"private_key_hex inválido"}))),
+    };
+    let kp: SigningKeyPair = match postcard::from_bytes(&kp_bytes) {
+        Ok(k) => k,
+        Err(_) => return (StatusCode::BAD_REQUEST, Json(serde_json::json!({"error":"keypair inválido"}))),
+    };
+    let address = hex::encode(kp.public_key());
+    if state.consensus.state.staking.get_stake(&address).is_none() {
+        return (StatusCode::FORBIDDEN, Json(serde_json::json!({"error":"Solo validadores con stake pueden enviar precios"})));
+    }
+    let round = state.consensus.get_current_round();
+    match state.consensus.state.oracle.submit_price(&address, &req.pair, req.price_usd_micro, round) {
+        Ok(_) => (StatusCode::OK, Json(serde_json::json!({"success":true,"pair":req.pair,"price_usd":req.price_usd_micro as f64/1_000_000.0}))),
+        Err(e) => (StatusCode::BAD_REQUEST, Json(serde_json::json!({"error":e.to_string()}))),
+    }
 }

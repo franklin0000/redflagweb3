@@ -1600,15 +1600,156 @@ function BridgePage({ wallet }) {
 }
 
 // ─────────────────────────────────────────────
+// GOVERNANCE PAGE
+// ─────────────────────────────────────────────
+function GovernancePage({wallet}) {
+  const [proposals, setProposals] = useState([]);
+  const [prices, setPrices] = useState([]);
+  const [loading, setLoading] = useState(false);
+  const [tab, setTab] = useState('proposals');
+  const [form, setForm] = useState({title:'',description:'',param:'MinFee',new_value:''});
+  const [msg, setMsg] = useState(null);
+
+  const load = ()=>{
+    sdk.get('/governance/proposals').then(r=>setProposals(r.proposals||[])).catch(()=>{});
+    sdk.get('/oracle/prices').then(r=>setPrices(r.prices||[])).catch(()=>{});
+  };
+  useEffect(()=>{ load(); const id=setInterval(load,10000); return()=>clearInterval(id); },[]);
+
+  const propose = async(e)=>{
+    e.preventDefault();
+    if(!wallet?.privateKeyHex) return setMsg({type:'err',text:'Conecta tu wallet primero'});
+    setLoading(true); setMsg(null);
+    try {
+      const r = await sdk.post('/governance/propose',{
+        private_key_hex: wallet.privateKeyHex,
+        title: form.title, description: form.description,
+        param: form.param, new_value: parseInt(form.new_value)||0,
+      });
+      if(r.success) { setMsg({type:'ok',text:`Propuesta #${r.proposal_id} creada. Votación hasta ronda ${r.voting_end_round}`}); setForm({title:'',description:'',param:'MinFee',new_value:''}); load(); }
+      else setMsg({type:'err',text:r.error});
+    } catch(ex){ setMsg({type:'err',text:ex.message}); }
+    finally{ setLoading(false); }
+  };
+
+  const vote = async(id, voteFor)=>{
+    if(!wallet?.privateKeyHex) return setMsg({type:'err',text:'Conecta tu wallet primero'});
+    try {
+      const r = await sdk.post('/governance/vote',{private_key_hex:wallet.privateKeyHex, proposal_id:id, vote:voteFor});
+      if(r.success) { setMsg({type:'ok',text:`Voto registrado (${r.stake_weight} RF de peso)`}); load(); }
+      else setMsg({type:'err',text:r.error});
+    } catch(ex){ setMsg({type:'err',text:ex.message}); }
+  };
+
+  const tabStyle=(t)=>({padding:'8px 18px',cursor:'pointer',fontSize:13,fontWeight:600,
+    borderBottom:tab===t?'2px solid var(--cyan)':'2px solid transparent',
+    color:tab===t?'var(--cyan)':'var(--txm)',background:'none',border:'none',
+    borderBottomWidth:2,borderBottomStyle:'solid'});
+
+  const statusColor={active:'var(--cyan)',passed:'var(--green)',rejected:'var(--red)',pending_finalization:'var(--yellow)'};
+
+  return (
+    <div>
+      <div style={{display:'flex',borderBottom:'1px solid var(--border)',marginBottom:20}}>
+        <button style={tabStyle('proposals')} onClick={()=>setTab('proposals')}>Proposals ({proposals.length})</button>
+        <button style={tabStyle('propose')} onClick={()=>setTab('propose')}>New Proposal</button>
+        <button style={tabStyle('oracle')} onClick={()=>setTab('oracle')}>Price Oracle</button>
+      </div>
+
+      {msg && <Alert type={msg.type==='ok'?'ok':'err'} style={{marginBottom:16}}>{msg.text}</Alert>}
+
+      {tab==='proposals' && (
+        <div>
+          {proposals.length===0 && <div style={{textAlign:'center',color:'var(--txl)',padding:40}}>No hay propuestas aún. Sé el primero en crear una.</div>}
+          {proposals.map(p=>(
+            <div key={p.id} className="card fi" style={{marginBottom:16}}>
+              <div style={{display:'flex',alignItems:'center',gap:10,marginBottom:12}}>
+                <span style={{fontFamily:'var(--acc)',fontWeight:700,fontSize:15}}>#{p.id} {p.title}</span>
+                <span style={{fontSize:11,padding:'2px 8px',borderRadius:4,background:'rgba(255,255,255,0.07)',color:statusColor[p.status]||'var(--txm)',fontWeight:700}}>{p.status}</span>
+              </div>
+              <div style={{fontSize:13,color:'var(--txm)',marginBottom:12}}>{p.description}</div>
+              <div style={{display:'flex',gap:20,fontSize:12,color:'var(--txl)',marginBottom:12}}>
+                <span>Param: <b style={{color:'var(--txt)'}}>{p.param}</b></span>
+                <span>Nuevo valor: <b style={{color:'var(--cyan)'}}>{p.new_value}</b></span>
+                <span>Votación cierra: ronda <b style={{color:'var(--txt)'}}>{p.voting_end_round}</b></span>
+                <span>Votantes: <b>{p.voter_count}</b></span>
+              </div>
+              <div style={{display:'flex',gap:12,alignItems:'center',marginBottom:p.status==='active'?12:0}}>
+                <div style={{flex:1,background:'var(--bg)',borderRadius:6,height:8,overflow:'hidden'}}>
+                  {(p.votes_for+p.votes_against)>0 && (
+                    <div style={{width:`${p.votes_for/(p.votes_for+p.votes_against)*100}%`,height:'100%',background:'var(--green)'}}/>
+                  )}
+                </div>
+                <span style={{fontSize:12,color:'var(--green)',minWidth:80}}>SÍ: {fmtN(p.votes_for)} RF</span>
+                <span style={{fontSize:12,color:'var(--red)',minWidth:80}}>NO: {fmtN(p.votes_against)} RF</span>
+              </div>
+              {p.status==='active' && (
+                <div style={{display:'flex',gap:8}}>
+                  <button className="btn btn-p" style={{flex:1,fontSize:12}} onClick={()=>vote(p.id,true)}>Votar SÍ</button>
+                  <button className="btn" style={{flex:1,fontSize:12,borderColor:'var(--red)',color:'var(--red)'}} onClick={()=>vote(p.id,false)}>Votar NO</button>
+                </div>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+
+      {tab==='propose' && (
+        <div className="card fi">
+          <SectionHdr icon={Users} title="Nueva Propuesta" color="var(--cyan)"/>
+          <form onSubmit={propose} style={{display:'flex',flexDirection:'column',gap:14,marginTop:16}}>
+            <input className="inp" placeholder="Título" value={form.title} onChange={e=>setForm({...form,title:e.target.value})} required/>
+            <textarea className="inp" placeholder="Descripción" rows={3} value={form.description} onChange={e=>setForm({...form,description:e.target.value})} style={{resize:'vertical'}} required/>
+            <div style={{display:'flex',gap:12}}>
+              <select className="inp" value={form.param} onChange={e=>setForm({...form,param:e.target.value})} style={{flex:1}}>
+                {['MinFee','HalvingInterval','MinStake','FeeBurnPercent','UnstakeDelay'].map(p=>(
+                  <option key={p} value={p}>{p}</option>
+                ))}
+              </select>
+              <input className="inp" placeholder="Nuevo valor" type="number" value={form.new_value} onChange={e=>setForm({...form,new_value:e.target.value})} style={{flex:1}} required/>
+            </div>
+            <button className="btn btn-p" type="submit" disabled={loading||!wallet?.privateKeyHex}>
+              {loading?<span className="spin"><RefreshCw size={14}/></span>:<Users size={14}/>} Crear Propuesta
+            </button>
+            {!wallet?.privateKeyHex && <Alert type="wrn">Necesitas stake activo y wallet conectada para proponer</Alert>}
+          </form>
+        </div>
+      )}
+
+      {tab==='oracle' && (
+        <div>
+          <div className="card fi">
+            <SectionHdr icon={TrendingUp} title="Price Oracle — Mediana de validadores" color="var(--purple)"/>
+            <div style={{marginTop:16,display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(200px,1fr))',gap:12}}>
+              {prices.length===0 && <div style={{color:'var(--txl)',fontSize:13}}>Sin datos de precio aún. Los validadores deben enviar precios.</div>}
+              {prices.map(p=>(
+                <div key={p.pair} style={{background:'var(--bg)',borderRadius:8,padding:14}}>
+                  <div style={{fontSize:12,color:'var(--txl)',marginBottom:4}}>{p.pair}</div>
+                  <div style={{fontSize:22,fontWeight:700,fontFamily:'var(--acc)',color:'var(--cyan)'}}>
+                    ${p.price_usd?.toFixed(6)||'—'}
+                  </div>
+                  <div style={{fontSize:11,color:'var(--txl)',marginTop:4}}>{p.submissions} validadores · ronda {p.last_updated_round}</div>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────
 const PAGES = [
-  {id:'wallet',   label:'Wallet',      icon:Wallet},
-  {id:'dashboard',label:'Dashboard',   icon:Activity},
-  {id:'staking',  label:'Staking',     icon:Shield},
-  {id:'bridge',   label:'Bridge',      icon:ArrowLeftRight},
-  {id:'dex',      label:'DEX Trading', icon:TrendingUp},
-  {id:'explorer', label:'Explorer',    icon:Search},
-  {id:'network',  label:'Network',     icon:Globe},
-  {id:'settings', label:'Settings',    icon:Settings},
+  {id:'wallet',     label:'Wallet',      icon:Wallet},
+  {id:'dashboard',  label:'Dashboard',   icon:Activity},
+  {id:'staking',    label:'Staking',     icon:Shield},
+  {id:'bridge',     label:'Bridge',      icon:ArrowLeftRight},
+  {id:'dex',        label:'DEX Trading', icon:TrendingUp},
+  {id:'explorer',   label:'Explorer',    icon:Search},
+  {id:'governance', label:'Governance',  icon:Users},
+  {id:'network',    label:'Network',     icon:Globe},
+  {id:'settings',   label:'Settings',    icon:Settings},
 ];
 
 export default function App() {
@@ -1730,6 +1871,7 @@ export default function App() {
           {page==='bridge'    && <BridgePage    wallet={wallet}/>}
           {page==='dex'       && <DexPage       wallet={wallet}/>}
           {page==='explorer'  && <ExplorerPage  initialQuery={searchQuery}/>}
+          {page==='governance'&& <GovernancePage wallet={wallet}/>}
           {page==='network'   && <NetworkPage   stats={stats} online={online}/>}
           {page==='settings'  && <SettingsPage  wallet={wallet} onLogout={()=>{ setWallet(null); }}/>}
         </div>

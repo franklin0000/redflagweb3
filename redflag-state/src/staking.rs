@@ -114,6 +114,19 @@ impl StakingState {
         rewards
     }
 
+    /// Aplica slash: reduce el stake del validador sin iniciar unbonding
+    pub fn slash(&self, address: &str, amount: u64) -> Result<(), anyhow::Error> {
+        let mut record = self.get_stake(address)
+            .ok_or_else(|| anyhow::anyhow!("No hay stake para {}", address))?;
+        record.amount = record.amount.saturating_sub(amount);
+        if record.amount == 0 {
+            self.tree.remove(address)?;
+        } else {
+            self.tree.insert(address, postcard::to_allocvec(&record)?)?;
+        }
+        Ok(())
+    }
+
     /// Validadores activos (stake >= MIN_STAKE y no en unbonding)
     pub fn active_validators(&self) -> Vec<StakeRecord> {
         self.tree.iter()

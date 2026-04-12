@@ -79,6 +79,10 @@ class RedFlagSDK {
         })).data;
     }
 
+    // ── Generic HTTP ──
+    async get(path)        { return (await axios.get(`${this.nodeUrl}${path}`)).data; }
+    async post(path, body) { return (await axios.post(`${this.nodeUrl}${path}`, body)).data; }
+
     // ── Staking ──
     async getStakingInfo()   { return (await axios.get(`${this.nodeUrl}/staking/info`)).data; }
     async getStakes()        { return (await axios.get(`${this.nodeUrl}/staking/stakes`)).data; }

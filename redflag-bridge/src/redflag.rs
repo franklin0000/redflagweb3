@@ -48,29 +48,101 @@ impl RedFlagClient {
         }
     }
 
-    /// Mintea RF nativo en la cadena RedFlag usando BRIDGE_MINT_SECRET (sin exponer clave privada)
-    /// FIX #5: La clave privada RF nunca viaja por HTTP.
-    /// El nodo firma internamente usando su faucet/relayer key almacenada localmente.
+    /// Recoge aprobaciones threshold de todos los nodos configurados en BRIDGE_NODE_URLS.
+    /// Devuelve (approvals_json, evm_tx_hash_used, nonce_used).
+    async fn collect_approvals(
+        &self,
+        evm_tx_hash: &str,
+        to: &str,
+        token: &str,
+        amount: u64,
+        nonce: u64,
+    ) -> Result<Vec<serde_json::Value>> {
+        let node_urls: Vec<String> = std::env::var("BRIDGE_NODE_URLS")
+            .unwrap_or_default()
+            .split(',')
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+            .collect();
+
+        if node_urls.is_empty() {
+            return Ok(vec![]);
+        }
+
+        let threshold = (node_urls.len() * 2 + 2) / 3;
+        let mut approvals = Vec::new();
+
+        for url in &node_urls {
+            match self.http
+                .post(format!("{}/bridge/approve-mint", url))
+                .json(&serde_json::json!({
+                    "evm_tx_hash": evm_tx_hash,
+                    "to":          to,
+                    "token":       token,
+                    "amount":      amount,
+                    "nonce":       nonce,
+                }))
+                .timeout(std::time::Duration::from_secs(10))
+                .send().await
+            {
+                Ok(r) => {
+                    if let Ok(v) = r.json::<serde_json::Value>().await {
+                        if v["approved"].as_bool() == Some(true) {
+                            approvals.push(serde_json::json!({
+                                "signer_pubkey": v["signer_pubkey"],
+                                "signature":     v["signature"],
+                            }));
+                            tracing::info!("✅ Aprobación de {}: {}", url, approvals.len());
+                        }
+                    }
+                }
+                Err(e) => tracing::warn!("⚠️  Nodo {} no respondió: {}", url, e),
+            }
+            if approvals.len() >= threshold { break; }
+        }
+
+        if approvals.len() < threshold {
+            anyhow::bail!("Threshold no alcanzado: {}/{} aprobaciones", approvals.len(), threshold);
+        }
+        Ok(approvals)
+    }
+
+    /// Mintea RF nativo en la cadena RedFlag.
+    /// Usa threshold multi-sig si BRIDGE_NODE_URLS está configurado, si no usa secreto legado.
     pub async fn mint_rf(&self, to_address: &str, amount: u64, _bridge_private_key: &str) -> Result<String> {
-        // FIX A: Fallar explícitamente si el secreto no está configurado
+        let node_urls = std::env::var("BRIDGE_NODE_URLS").unwrap_or_default();
+        if !node_urls.is_empty() {
+            // Modo threshold
+            let nonce = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_secs();
+            let evm_tx_hash = format!("rf-{}-{}", to_address, nonce);
+            let approvals = self.collect_approvals(&evm_tx_hash, to_address, "RF", amount, nonce).await?;
+            let res = self.http
+                .post(format!("{}/bridge/mint", self.node_url))
+                .json(&serde_json::json!({
+                    "to": to_address, "token": "RF", "amount": amount,
+                    "evm_tx_hash": evm_tx_hash, "nonce": nonce,
+                    "approvals": approvals,
+                }))
+                .send().await?.json::<serde_json::Value>().await?;
+            if res["success"].as_bool() != Some(true) {
+                anyhow::bail!("Mint RF threshold falló: {}", res["error"].as_str().unwrap_or("unknown"));
+            }
+            return Ok(res["tx_hash"].as_str().unwrap_or("").to_string());
+        }
+
+        // Modo legado: secreto compartido
         let secret = std::env::var("BRIDGE_MINT_SECRET")
-            .map_err(|_| anyhow::anyhow!("BRIDGE_MINT_SECRET no configurado en el entorno del relayer"))?;
+            .map_err(|_| anyhow::anyhow!("BRIDGE_MINT_SECRET no configurado"))?;
         if secret.is_empty() || secret == "bridge_dev_secret" {
             anyhow::bail!("BRIDGE_MINT_SECRET usa valor por defecto inseguro — configura uno seguro");
         }
-        // Usamos el endpoint /bridge/mint que autentica con BRIDGE_MINT_SECRET
-        // y ejecuta la TX internamente en el nodo sin exponer ninguna clave privada.
         let res = self.http
             .post(format!("{}/bridge/mint", self.node_url))
             .json(&serde_json::json!({
-                "bridge_secret": secret,
-                "to":     to_address,
-                "token":  "RF",
-                "amount": amount,
+                "bridge_secret": secret, "to": to_address, "token": "RF", "amount": amount,
             }))
-            .send().await?
-            .json::<serde_json::Value>().await?;
-
+            .send().await?.json::<serde_json::Value>().await?;
         if res["success"].as_bool() != Some(true) {
             anyhow::bail!("Mint RF falló: {}", res["error"].as_str().unwrap_or("unknown"));
         }
@@ -79,23 +151,40 @@ impl RedFlagClient {
 
     /// Mintea wrapped token (wETH, wBNB, wMATIC) cuando el bridge detecta un lock EVM
     pub async fn mint_wrapped_token(&self, to: &str, token: &str, amount_units: u64) -> Result<()> {
+        let node_urls = std::env::var("BRIDGE_NODE_URLS").unwrap_or_default();
+        if !node_urls.is_empty() {
+            // Modo threshold
+            let nonce = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_secs();
+            let evm_tx_hash = format!("evm-{}-{}-{}", token, to, nonce);
+            let approvals = self.collect_approvals(&evm_tx_hash, to, token, amount_units, nonce).await?;
+            let res = self.http
+                .post(format!("{}/bridge/mint", self.node_url))
+                .json(&serde_json::json!({
+                    "to": to, "token": token, "amount": amount_units,
+                    "evm_tx_hash": evm_tx_hash, "nonce": nonce,
+                    "approvals": approvals,
+                }))
+                .send().await?.json::<serde_json::Value>().await?;
+            if res["success"].as_bool() != Some(true) {
+                anyhow::bail!("Mint {} threshold falló: {}", token, res["error"].as_str().unwrap_or("unknown"));
+            }
+            tracing::info!("✅ Minted {} {} → {} (threshold)", amount_units, token, &to[..12.min(to.len())]);
+            return Ok(());
+        }
+
+        // Modo legado
         let secret = std::env::var("BRIDGE_MINT_SECRET")
             .map_err(|_| anyhow::anyhow!("BRIDGE_MINT_SECRET no configurado"))?;
         if secret.is_empty() || secret == "bridge_dev_secret" {
             anyhow::bail!("BRIDGE_MINT_SECRET inseguro");
         }
-
         let res = self.http
             .post(format!("{}/bridge/mint", self.node_url))
             .json(&serde_json::json!({
-                "bridge_secret": secret,
-                "to":     to,
-                "token":  token,
-                "amount": amount_units,
+                "bridge_secret": secret, "to": to, "token": token, "amount": amount_units,
             }))
-            .send().await?
-            .json::<serde_json::Value>().await?;
-
+            .send().await?.json::<serde_json::Value>().await?;
         if res["success"].as_bool() != Some(true) {
             anyhow::bail!("Mint {} falló: {}", token, res["error"].as_str().unwrap_or("unknown"));
         }

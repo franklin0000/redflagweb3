@@ -168,6 +168,7 @@ pub fn create_router(state: ApiState) -> Router {
         .route("/tokens/:addr/:token",    get(get_token_balance))
         // Bridge mint (llamado por el relayer)
         .route("/bridge/mint",            post(bridge_mint))
+        .route("/bridge/approve-mint",    post(bridge_approve_mint))
         // DEX — trading en tiempo real
         .route("/dex/pools",              get(dex_pools))
         .route("/dex/pool/:id",           get(dex_pool))
@@ -847,37 +848,121 @@ async fn get_token_balance(
     Json(serde_json::json!({ "address": addr, "token": token, "balance": bal }))
 }
 
+/// Una aprobación de threshold: (pubkey_hex, sig_hex) de un nodo del comité
+#[derive(Deserialize)]
+struct BridgeApproval {
+    signer_pubkey: String,
+    signature:     String,
+}
+
 #[derive(Deserialize)]
 struct BridgeMintRequest {
-    /// Clave secreta del bridge (para autenticar el relayer)
-    bridge_secret: String,
+    /// Modo legado: secreto compartido (solo si BRIDGE_COMMITTEE_PUBKEYS no configurado)
+    bridge_secret: Option<String>,
     to:     String,
     token:  String,
-    amount: u64, // en units (6 decimales)
+    amount: u64,
+    /// Modo threshold: hash EVM tx y nonce (para reconstruir el mensaje firmado)
+    evm_tx_hash: Option<String>,
+    nonce:       Option<u64>,
+    /// Aprobaciones de los nodos del comité (modo threshold)
+    approvals: Option<Vec<BridgeApproval>>,
+}
+
+/// Solicitud de aprobación de mint (bridge threshold)
+#[derive(Deserialize)]
+struct BridgeApproveRequest {
+    evm_tx_hash: String,
+    to:          String,
+    token:       String,
+    amount:      u64,
+    nonce:       u64,
+}
+
+async fn bridge_approve_mint(
+    State(state): State<ApiState>,
+    Json(req): Json<BridgeApproveRequest>,
+) -> (StatusCode, Json<serde_json::Value>) {
+    // Límite de seguridad
+    let max_amount: u64 = std::env::var("BRIDGE_MAX_AMOUNT").ok()
+        .and_then(|s| s.parse().ok()).unwrap_or(1_000_000_000_000);
+    if req.amount > max_amount {
+        return (StatusCode::BAD_REQUEST, Json(serde_json::json!({"error":"amount exceeds bridge limit"})));
+    }
+    // Construir mensaje determinista
+    let msg = format!("approve-mint:{}:{}:{}:{}:{}", req.evm_tx_hash, req.to, req.token, req.amount, req.nonce);
+    let msg_hash = blake3::hash(msg.as_bytes()).as_bytes().to_vec();
+    // Firmar con la clave del faucet (persistente por nodo)
+    match state.faucet_key.sign(&msg_hash) {
+        Ok(sig) => {
+            let pubkey = hex::encode(state.faucet_key.public_key().to_vec());
+            (StatusCode::OK, Json(serde_json::json!({
+                "approved": true,
+                "signer_pubkey": pubkey,
+                "signature": hex::encode(&sig),
+            })))
+        }
+        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"error": e.to_string()}))),
+    }
 }
 
 async fn bridge_mint(
     State(state): State<ApiState>,
     Json(req): Json<BridgeMintRequest>,
 ) -> (StatusCode, Json<serde_json::Value>) {
-    // FIX #6: Verificar secreto con timing-safe comparison (evita timing attacks)
-    // FIX A: Rechazar si BRIDGE_MINT_SECRET no está configurado (no usar default inseguro)
-    let expected = match std::env::var("BRIDGE_MINT_SECRET") {
-        Ok(s) if !s.is_empty() && s != "bridge_dev_secret" => s,
-        _ => {
-            tracing::error!("BRIDGE_MINT_SECRET no configurado o usa valor por defecto inseguro");
-            return (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({ "error": "Bridge no configurado correctamente" })));
+    // ── Autenticación: threshold (preferido) o secreto legado ─────────────────
+    let committee_env = std::env::var("BRIDGE_COMMITTEE_PUBKEYS").unwrap_or_default();
+    let using_threshold = !committee_env.is_empty() && req.approvals.is_some();
+
+    if using_threshold {
+        // Modo threshold: verificar quórum de firmas ML-DSA del comité
+        let committee: Vec<Vec<u8>> = committee_env
+            .split(',')
+            .filter(|s| !s.is_empty())
+            .filter_map(|s| hex::decode(s.trim()).ok())
+            .collect();
+
+        let approvals = req.approvals.as_ref().unwrap();
+        let evm_tx_hash = req.evm_tx_hash.as_deref().unwrap_or("");
+        let nonce = req.nonce.unwrap_or(0);
+        let msg = format!("approve-mint:{}:{}:{}:{}:{}", evm_tx_hash, req.to, req.token, req.amount, nonce);
+        let msg_hash = blake3::hash(msg.as_bytes()).as_bytes().to_vec();
+
+        // ceil(2n/3) threshold
+        let threshold = (committee.len() * 2 + 2) / 3;
+        let mut valid = 0usize;
+        for approval in approvals {
+            let Ok(pk)  = hex::decode(&approval.signer_pubkey) else { continue };
+            let Ok(sig) = hex::decode(&approval.signature)     else { continue };
+            if committee.contains(&pk) && Verifier::verify(&pk, &msg_hash, &sig).is_ok() {
+                valid += 1;
+            }
         }
-    };
-    // Comparación de longitud constante para evitar timing side-channel
-    let secret_ok = req.bridge_secret.len() == expected.len()
-        && req.bridge_secret.as_bytes().iter()
-            .zip(expected.as_bytes().iter())
-            .fold(0u8, |acc, (a, b)| acc | (a ^ b)) == 0;
-    if !secret_ok {
-        // Log intento fallido sin revelar el secreto esperado
-        tracing::warn!("Bridge mint rechazado: secreto incorrecto (IP desconocida)");
-        return (StatusCode::UNAUTHORIZED, Json(serde_json::json!({ "error": "Unauthorized" })));
+        if valid < threshold {
+            tracing::warn!("Bridge threshold no alcanzado: {}/{}", valid, threshold);
+            return (StatusCode::UNAUTHORIZED, Json(serde_json::json!({
+                "error": format!("Threshold no alcanzado: {}/{} aprobaciones válidas", valid, threshold)
+            })));
+        }
+        tracing::info!("Bridge threshold OK: {}/{} aprobaciones", valid, committee.len());
+    } else {
+        // Modo legado: secreto compartido
+        let expected = match std::env::var("BRIDGE_MINT_SECRET") {
+            Ok(s) if !s.is_empty() && s != "bridge_dev_secret" => s,
+            _ => {
+                tracing::error!("BRIDGE_MINT_SECRET no configurado o usa valor por defecto inseguro");
+                return (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({ "error": "Bridge no configurado correctamente" })));
+            }
+        };
+        let provided = req.bridge_secret.as_deref().unwrap_or("");
+        let secret_ok = provided.len() == expected.len()
+            && provided.as_bytes().iter()
+                .zip(expected.as_bytes().iter())
+                .fold(0u8, |acc, (a, b)| acc | (a ^ b)) == 0;
+        if !secret_ok {
+            tracing::warn!("Bridge mint rechazado: secreto incorrecto");
+            return (StatusCode::UNAUTHORIZED, Json(serde_json::json!({ "error": "Unauthorized" })));
+        }
     }
     // Validar cantidad máxima por mint (anti-exploit)
     const MAX_MINT_PER_TX: u64 = 1_000_000_000_000; // 1M RF máximo por mint

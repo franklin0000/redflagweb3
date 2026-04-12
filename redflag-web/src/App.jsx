@@ -1744,11 +1744,11 @@ function GovernancePage({wallet, wsData}) {
 // MONITORING PAGE
 // ─────────────────────────────────────────────
 const NODES = [
-  { name:'node1', url:'https://redflagweb3-node1.onrender.com' },
-  { name:'node2', url:'https://redflagweb3-node2.onrender.com' },
-  { name:'node3', url:'https://redflagweb3-node3.onrender.com' },
-  { name:'node4', url:'https://redflagweb3-node4.onrender.com' },
-  { name:'node5', url:'https://redflagweb3-node5.onrender.com' },
+  { name:'node1', url:'https://redflagweb3-node1.onrender.com', committee:true },
+  { name:'node2', url:'https://redflagweb3-node2.onrender.com', committee:true },
+  { name:'node3', url:'https://redflagweb3-node3.onrender.com', committee:true },
+  { name:'node4', url:'https://redflagweb3-node4.onrender.com', committee:false },
+  { name:'node5', url:'https://redflagweb3-node5.onrender.com', committee:false },
 ];
 
 function MonitoringPage() {

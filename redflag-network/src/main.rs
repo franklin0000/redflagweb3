@@ -59,6 +59,24 @@ async fn main() -> Result<(), Box<dyn Error>> {
     state_db.ensure_faucet(&faucet_address, 500_000_000_000_000)?; // 500M RF para testnet
     println!("💾 Estado: {}", state_db_path);
 
+    // ── 3a. Inicializar pools DEX génesis ────────────────────────────────────
+    // Crea pools vacíos para todos los tokens soportados si aún no existen.
+    // Esto permite que /api/v1/ticker muestre los 9 pares desde el inicio.
+    let genesis_tokens = ["wETH","wBNB","wMATIC","wSOL","wAVAX","wARB","wBTC","wUSDC","wUSDT"];
+    let genesis_ts = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_secs();
+    let mut pools_created = 0u32;
+    for token in &genesis_tokens {
+        if state_db.dex.get_pool(&format!("RF_{}", token)).is_none() {
+            match state_db.dex.create_pool(token, genesis_ts) {
+                Ok(_) => { pools_created += 1; }
+                Err(e) => eprintln!("⚠️  Genesis pool RF_{} error: {}", token, e),
+            }
+        }
+    }
+    if pools_created > 0 {
+        println!("🏊 {} pools DEX génesis inicializados", pools_created);
+    }
+
     // ── 3b. Sincronización inicial desde nodo bootstrap ──────────────────────
     if let Ok(sync_url) = env::var("SYNC_FROM") {
         // Solo sincronizar si el estado local está vacío (primer arranque)

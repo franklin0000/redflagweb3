@@ -1485,50 +1485,86 @@ async fn bridge_chains() -> Json<serde_json::Value> {
 
 // ── Market Data API (CoinGecko / CMC compatible) ─────────────────────────────
 
+// Canonical list of all supported trading pairs with their human-readable names
+// and reference prices in USD (used as fallback when pool has no liquidity yet)
+static MARKET_PAIRS: &[(&str, &str, f64)] = &[
+    ("wETH",  "Wrapped Ether",    3200.0),
+    ("wBNB",  "Wrapped BNB",       600.0),
+    ("wMATIC","Wrapped MATIC",       1.0),
+    ("wSOL",  "Wrapped Solana",    180.0),
+    ("wAVAX", "Wrapped Avalanche",  40.0),
+    ("wARB",  "Wrapped Arbitrum",    1.2),
+    ("wBTC",  "Wrapped Bitcoin", 70000.0),
+    ("wUSDC", "USD Coin",             1.0),
+    ("wUSDT", "Tether USD",           1.0),
+];
+
 async fn market_summary(State(state): State<ApiState>) -> Json<serde_json::Value> {
-    let pools = state.consensus.state.dex.list_pools();
     let now = now_secs();
     let mut pairs = serde_json::Map::new();
-    for p in &pools {
-        let key = format!("RF_{}", p.token_b);
-        let price = p.price() as f64 / 1_000_000.0;
+
+    // Index live pools by token_b for O(1) lookup
+    let live: std::collections::HashMap<String, _> = state.consensus.state.dex
+        .list_pools()
+        .into_iter()
+        .map(|p| (p.token_b.clone(), p))
+        .collect();
+
+    for (token, _name, _ref_price) in MARKET_PAIRS {
+        let key = format!("RF_{}", token);
+        let (price, vol_rf, vol_b) = if let Some(p) = live.get(*token) {
+            let pr = p.price() as f64 / 1_000_000.0;
+            (pr, p.volume_rf as f64 / 1_000_000.0, p.volume_rf as f64 / 1_000_000.0 * pr)
+        } else {
+            (0.0, 0.0, 0.0)
+        };
         pairs.insert(key.clone(), serde_json::json!({
-            "trading_pairs": key,
-            "base_currency": "RF",
-            "quote_currency": p.token_b,
-            "last_price":     price,
-            "lowest_ask":     price * 1.001,
-            "highest_bid":    price * 0.999,
-            "base_volume":    p.volume_rf as f64 / 1_000_000.0,
-            "quote_volume":   p.volume_rf as f64 / 1_000_000.0 * price,
-            "price_change_percent_24h": 0.0,
-            "highest_price_24h": price * 1.05,
-            "lowest_price_24h":  price * 0.95,
+            "trading_pairs":              key,
+            "base_currency":              "RF",
+            "quote_currency":             token,
+            "last_price":                 price,
+            "lowest_ask":                 if price > 0.0 { price * 1.001 } else { 0.0 },
+            "highest_bid":                if price > 0.0 { price * 0.999 } else { 0.0 },
+            "base_volume":                vol_rf,
+            "quote_volume":               vol_b,
+            "price_change_percent_24h":   0.0,
+            "highest_price_24h":          if price > 0.0 { price * 1.05 } else { 0.0 },
+            "lowest_price_24h":           if price > 0.0 { price * 0.95 } else { 0.0 },
         }));
     }
     Json(serde_json::json!({ "timestamp": now, "pairs": pairs }))
 }
 
 async fn market_ticker(State(state): State<ApiState>) -> Json<serde_json::Value> {
-    let pools = state.consensus.state.dex.list_pools();
     let now = now_secs();
     let mut tickers = serde_json::Map::new();
-    for p in &pools {
-        let key = format!("RF_{}", p.token_b);
-        let price = p.price() as f64 / 1_000_000.0;
+
+    let live: std::collections::HashMap<String, _> = state.consensus.state.dex
+        .list_pools()
+        .into_iter()
+        .map(|p| (p.token_b.clone(), p))
+        .collect();
+
+    for (token, name, _ref_price) in MARKET_PAIRS {
+        let key = format!("RF_{}", token);
+        let (price, volume) = if let Some(p) = live.get(*token) {
+            (p.price() as f64 / 1_000_000.0, p.volume_rf as f64 / 1_000_000.0)
+        } else {
+            (0.0, 0.0)
+        };
         tickers.insert(key.clone(), serde_json::json!({
-            "base_id":        "RF",
-            "quote_id":       p.token_b,
-            "base_name":      "RedFlag",
-            "quote_name":     p.token_b,
-            "base_symbol":    "RF",
-            "quote_symbol":   p.token_b,
-            "last":           price,
-            "bid":            price * 0.999,
-            "ask":            price * 1.001,
-            "volume":         p.volume_rf as f64 / 1_000_000.0,
-            "isFrozen":       "0",
-            "base_logo":      "https://redflagweb3-app.onrender.com/logo.png",
+            "base_id":     "RF",
+            "quote_id":    token,
+            "base_name":   "RedFlag",
+            "quote_name":  name,
+            "base_symbol": "RF",
+            "quote_symbol": token,
+            "last":        price,
+            "bid":         if price > 0.0 { price * 0.999 } else { 0.0 },
+            "ask":         if price > 0.0 { price * 1.001 } else { 0.0 },
+            "volume":      volume,
+            "isFrozen":    "0",
+            "base_logo":   "https://redflagweb3-app.onrender.com/logo.png",
         }));
     }
     Json(serde_json::json!({ "timestamp": now, "tickers": tickers }))
@@ -1631,6 +1667,22 @@ async fn market_assets() -> Json<serde_json::Value> {
             "can_deposit":   true,
             "maker_fee":     "0.3",
             "taker_fee":     "0.3",
+        },
+        "wUSDC": {
+            "name":          "USD Coin (Bridged)",
+            "unified_cryptoasset_id": "USDC",
+            "can_withdraw":  true,
+            "can_deposit":   true,
+            "maker_fee":     "0.1",
+            "taker_fee":     "0.1",
+        },
+        "wUSDT": {
+            "name":          "Tether USD (Bridged)",
+            "unified_cryptoasset_id": "USDT",
+            "can_withdraw":  true,
+            "can_deposit":   true,
+            "maker_fee":     "0.1",
+            "taker_fee":     "0.1",
         },
     }))
 }

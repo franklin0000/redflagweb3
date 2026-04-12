@@ -59,22 +59,54 @@ async fn main() -> Result<(), Box<dyn Error>> {
     state_db.ensure_faucet(&faucet_address, 500_000_000_000_000)?; // 500M RF para testnet
     println!("💾 Estado: {}", state_db_path);
 
-    // ── 3a. Inicializar pools DEX génesis ────────────────────────────────────
-    // Crea pools vacíos para todos los tokens soportados si aún no existen.
-    // Esto permite que /api/v1/ticker muestre los 9 pares desde el inicio.
-    let genesis_tokens = ["wETH","wBNB","wMATIC","wSOL","wAVAX","wARB","wBTC","wUSDC","wUSDT"];
+    // ── 3a. Inicializar pools DEX génesis + liquidez inicial ─────────────────
+    // Crea pools y siembra liquidez si están vacíos. add_liquidity() solo
+    // actualiza las reservas del pool (no debita balances) → seguro en genesis.
+    // Precio simulado: 1 RF = $1 (testnet). Pool: 100,000 RF cada uno.
+    // amount_b = 100,000 / precio_usd_del_token  (en micro-unidades, 6 decimales)
+    //
+    // Fórmula: amount_b_micro = (100_000 / price_usd) * 1_000_000
+    let genesis_pools: &[(&str, u64, u64)] = &[
+        // (token,      amount_rf micro,  amount_b micro)
+        ("wETH",   100_000_000_000,     31_250_000), // 31.25 ETH   @ $3,200
+        ("wBNB",   100_000_000_000,    166_667_000), // 166.67 BNB  @ $600
+        ("wMATIC", 100_000_000_000, 100_000_000_000), // 100,000 MATIC @ $1
+        ("wSOL",   100_000_000_000,    555_556_000), // 555.56 SOL  @ $180
+        ("wAVAX",  100_000_000_000,  2_500_000_000), // 2,500 AVAX  @ $40
+        ("wARB",   100_000_000_000, 83_333_000_000), // 83,333 ARB  @ $1.20
+        ("wBTC",   100_000_000_000,      1_428_571), // 1.43 BTC    @ $70,000
+        ("wUSDC",  100_000_000_000, 100_000_000_000), // 100,000 USDC @ $1
+        ("wUSDT",  100_000_000_000, 100_000_000_000), // 100,000 USDT @ $1
+    ];
     let genesis_ts = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_secs();
-    let mut pools_created = 0u32;
-    for token in &genesis_tokens {
-        if state_db.dex.get_pool(&format!("RF_{}", token)).is_none() {
-            match state_db.dex.create_pool(token, genesis_ts) {
-                Ok(_) => { pools_created += 1; }
-                Err(e) => eprintln!("⚠️  Genesis pool RF_{} error: {}", token, e),
+    let mut pools_seeded = 0u32;
+    for (token, amount_rf, amount_b) in genesis_pools {
+        let pool_id = format!("RF_{}", token);
+        // Crear pool si no existe
+        if state_db.dex.get_pool(&pool_id).is_none() {
+            if let Err(e) = state_db.dex.create_pool(token, genesis_ts) {
+                eprintln!("⚠️  Genesis pool {} error: {}", pool_id, e);
+                continue;
+            }
+        }
+        // Sembrar liquidez solo si el pool está vacío (idempotente en reinicios)
+        let pool = state_db.dex.get_pool(&pool_id).unwrap();
+        if pool.reserve_rf == 0 {
+            // add_liquidity NO debita balances — solo actualiza reservas del pool
+            match state_db.dex.add_liquidity(&pool_id, &faucet_address, *amount_rf, *amount_b, genesis_ts) {
+                Ok(lp) => {
+                    pools_seeded += 1;
+                    println!("💧 Génesis RF_{}: {} RF + {} {} → {} LP",
+                        token, amount_rf / 1_000_000, amount_b / 1_000_000, token, lp);
+                }
+                Err(e) => eprintln!("⚠️  Liquidez génesis RF_{} error: {}", token, e),
             }
         }
     }
-    if pools_created > 0 {
-        println!("🏊 {} pools DEX génesis inicializados", pools_created);
+    if pools_seeded > 0 {
+        println!("🏊 {} pools DEX sembrados con liquidez génesis", pools_seeded);
+    } else {
+        println!("🏊 Pools DEX: liquidez ya existente, génesis omitido");
     }
 
     // ── 3b. Sincronización inicial desde nodo bootstrap ──────────────────────

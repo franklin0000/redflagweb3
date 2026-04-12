@@ -1590,6 +1590,38 @@ async fn market_assets() -> Json<serde_json::Value> {
             "maker_fee":     "0.3",
             "taker_fee":     "0.3",
         },
+        "wSOL": {
+            "name":          "Wrapped SOL",
+            "unified_cryptoasset_id": "SOL",
+            "can_withdraw":  true,
+            "can_deposit":   true,
+            "maker_fee":     "0.3",
+            "taker_fee":     "0.3",
+        },
+        "wAVAX": {
+            "name":          "Wrapped AVAX",
+            "unified_cryptoasset_id": "AVAX",
+            "can_withdraw":  true,
+            "can_deposit":   true,
+            "maker_fee":     "0.3",
+            "taker_fee":     "0.3",
+        },
+        "wARB": {
+            "name":          "Wrapped ARB",
+            "unified_cryptoasset_id": "ARB",
+            "can_withdraw":  true,
+            "can_deposit":   true,
+            "maker_fee":     "0.3",
+            "taker_fee":     "0.3",
+        },
+        "wBTC": {
+            "name":          "Wrapped BTC",
+            "unified_cryptoasset_id": "BTC",
+            "can_withdraw":  true,
+            "can_deposit":   true,
+            "maker_fee":     "0.3",
+            "taker_fee":     "0.3",
+        },
     }))
 }
 

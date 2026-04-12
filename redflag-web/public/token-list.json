@@ -2,8 +2,8 @@
   "name": "RedFlag Token List",
   "logoURI": "https://redflagweb3-app.onrender.com/logo.png",
   "keywords": ["redflag", "rf", "quantum", "defi"],
-  "timestamp": "2026-04-08T00:00:00Z",
-  "version": { "major": 1, "minor": 0, "patch": 0 },
+  "timestamp": "2026-04-12T00:00:00Z",
+  "version": { "major": 1, "minor": 1, "patch": 0 },
   "tokens": [
     {
       "chainId": 2100,
@@ -20,6 +20,78 @@
         "coingeckoId": "redflag",
         "explorer": "https://redflagweb3-node1.onrender.com"
       }
+    },
+    {
+      "chainId": 2100,
+      "address": "wETH",
+      "symbol": "wETH",
+      "name": "Wrapped Ether",
+      "decimals": 6,
+      "tags": ["wrapped", "ethereum"]
+    },
+    {
+      "chainId": 2100,
+      "address": "wBNB",
+      "symbol": "wBNB",
+      "name": "Wrapped BNB",
+      "decimals": 6,
+      "tags": ["wrapped", "bsc"]
+    },
+    {
+      "chainId": 2100,
+      "address": "wMATIC",
+      "symbol": "wMATIC",
+      "name": "Wrapped Polygon",
+      "decimals": 6,
+      "tags": ["wrapped", "polygon"]
+    },
+    {
+      "chainId": 2100,
+      "address": "wSOL",
+      "symbol": "wSOL",
+      "name": "Wrapped Solana",
+      "decimals": 6,
+      "tags": ["wrapped", "solana"]
+    },
+    {
+      "chainId": 2100,
+      "address": "wAVAX",
+      "symbol": "wAVAX",
+      "name": "Wrapped Avalanche",
+      "decimals": 6,
+      "tags": ["wrapped", "avalanche"]
+    },
+    {
+      "chainId": 2100,
+      "address": "wARB",
+      "symbol": "wARB",
+      "name": "Wrapped Arbitrum",
+      "decimals": 6,
+      "tags": ["wrapped", "arbitrum"]
+    },
+    {
+      "chainId": 2100,
+      "address": "wBTC",
+      "symbol": "wBTC",
+      "name": "Wrapped Bitcoin",
+      "decimals": 6,
+      "tags": ["wrapped", "bitcoin"]
+    },
+    {
+      "chainId": 2100,
+      "address": "wUSDC",
+      "symbol": "wUSDC",
+      "name": "Wrapped USD Coin",
+      "decimals": 6,
+      "tags": ["wrapped", "stablecoin"]
+    },
+    {
+      "chainId": 2100,
+      "address": "wUSDT",
+      "symbol": "wUSDT",
+      "name": "Wrapped Tether",
+      "decimals": 6,
+      "tags": ["wrapped", "stablecoin"]
     }
   ]
 }

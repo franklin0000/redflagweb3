@@ -1158,11 +1158,11 @@ function DexPage({ wallet, wsData }) {
           <div className="card fi" style={{border:'1px solid var(--bdr)',borderRadius:8,padding:'12px 14px',fontSize:12}}>
             <div style={{fontWeight:700,marginBottom:6,color:'var(--cyan)'}}>🌉 Cross-chain</div>
             <div style={{color:'var(--txl)',lineHeight:1.6}}>
-              Haz bridge de ETH/BNB/MATIC → wETH/wBNB/wMATIC en redflag.web3,<br/>
+              Haz bridge de ETH/BNB/MATIC/SOL/AVAX/ARB/BTC → wrapped tokens en redflag.web3,<br/>
               luego tradea en el DEX nativo con fees de solo 0.3%.
             </div>
             <div style={{display:'flex',gap:6,marginTop:8,flexWrap:'wrap'}}>
-              {['Ethereum','BSC','Polygon'].map(c=><span key={c} className="bdg bdg-b">{c}</span>)}
+              {['Ethereum','BSC','Polygon','Solana','Avalanche','Arbitrum','Bitcoin'].map(c=><span key={c} className="bdg bdg-b">{c}</span>)}
             </div>
           </div>
         </div>
@@ -1741,6 +1741,325 @@ function GovernancePage({wallet, wsData}) {
 }
 
 // ─────────────────────────────────────────────
+// MONITORING PAGE
+// ─────────────────────────────────────────────
+const NODES = [
+  { name:'node1', url:'https://redflagweb3-node1.onrender.com' },
+  { name:'node2', url:'https://redflagweb3-node2.onrender.com' },
+  { name:'node3', url:'https://redflagweb3-node3.onrender.com' },
+  { name:'node4', url:'https://redflagweb3-node4.onrender.com' },
+  { name:'node5', url:'https://redflagweb3-node5.onrender.com' },
+];
+
+function MonitoringPage() {
+  const [nodes, setNodes] = useState(NODES.map(n=>({...n,status:'checking',round:0,validators:0,uptime:0,version:'—'})));
+  const [last, setLast] = useState(null);
+
+  const checkNodes = useCallback(async()=>{
+    const results = await Promise.all(NODES.map(async n => {
+      try {
+        const [st, nw] = await Promise.all([
+          fetch(`${n.url}/status`, {signal:AbortSignal.timeout(5000)}).then(r=>r.json()),
+          fetch(`${n.url}/network/stats`, {signal:AbortSignal.timeout(5000)}).then(r=>r.json()),
+        ]);
+        return {
+          ...n, status:'online',
+          round: st.current_round||0,
+          validators: st.validator_count||0,
+          pending: st.pending_txs||0,
+          uptime: nw.node?.uptime_secs||0,
+          version: st.version||'—',
+          peer_id: st.peer_id ? st.peer_id.slice(0,16)+'…' : '—',
+        };
+      } catch {
+        return {...n, status:'offline', round:0, validators:0, pending:0, uptime:0, version:'—', peer_id:'—'};
+      }
+    }));
+    setNodes(results);
+    setLast(new Date().toLocaleTimeString());
+  },[]);
+
+  useEffect(()=>{ checkNodes(); const iv=setInterval(checkNodes,15000); return()=>clearInterval(iv); },[checkNodes]);
+
+  const online = nodes.filter(n=>n.status==='online').length;
+  const maxRound = Math.max(...nodes.map(n=>n.round));
+
+  return (
+    <div style={{display:'flex',flexDirection:'column',gap:16}}>
+      <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(140px,1fr))',gap:12}}>
+        <StatCard icon={Activity} label="Nodes Online" value={`${online}/${NODES.length}`} color={online>=3?'var(--green)':'var(--red)'}/>
+        <StatCard icon={Cpu} label="Max Round" value={fmtN(maxRound)} color="var(--cyan)"/>
+        <StatCard icon={Shield} label="BFT Quorum" value={online>=3?'Active':'Degraded'} color={online>=3?'var(--green)':'var(--red)'}/>
+        <StatCard icon={Clock} label="Last Check" value={last||'—'} color="var(--txm)"/>
+      </div>
+
+      <div className="card fi">
+        <SectionHdr icon={Activity} title="Node Health" right={<button className="ibtn" onClick={checkNodes} title="Refresh"><RefreshCw size={13}/></button>}/>
+        <div style={{marginTop:16,display:'flex',flexDirection:'column',gap:10}}>
+          {nodes.map(n=>(
+            <div key={n.name} style={{display:'flex',alignItems:'center',gap:12,padding:'10px 14px',background:'var(--bg)',borderRadius:8,flexWrap:'wrap'}}>
+              <div style={{display:'flex',alignItems:'center',gap:8,minWidth:80}}>
+                <div className={`ldot ${n.status==='online'?'on':'off'}`}/>
+                <span style={{fontWeight:700,fontSize:13}}>{n.name}</span>
+              </div>
+              <span style={{fontSize:11,color:n.status==='online'?'var(--green)':'var(--red)',fontWeight:600,minWidth:55}}>{n.status}</span>
+              <div style={{flex:1,display:'flex',gap:16,flexWrap:'wrap',fontSize:12,color:'var(--txm)'}}>
+                <span>Round: <b style={{color:'var(--fg)'}}>{fmtN(n.round)}</b></span>
+                <span>Validators: <b style={{color:'var(--fg)'}}>{n.validators}</b></span>
+                <span>Pending: <b style={{color:'var(--fg)'}}>{n.pending||0}</b></span>
+                <span>Uptime: <b style={{color:'var(--fg)'}}>{n.uptime ? Math.floor(n.uptime/3600)+'h '+Math.floor((n.uptime%3600)/60)+'m' : '—'}</b></span>
+                <span>v{n.version}</span>
+              </div>
+              {n.round>0 && maxRound>0 && n.round < maxRound-5 && (
+                <span style={{fontSize:11,color:'var(--yellow)',fontWeight:600}}>⚠ Lagging {maxRound-n.round} rounds</span>
+              )}
+            </div>
+          ))}
+        </div>
+      </div>
+
+      <div className="card fi">
+        <SectionHdr icon={Globe} title="Network Endpoints"/>
+        <div style={{marginTop:12,display:'flex',flexDirection:'column',gap:6}}>
+          {NODES.map(n=>(
+            <div key={n.name} style={{display:'flex',justifyContent:'space-between',alignItems:'center',fontSize:12,padding:'6px 0',borderBottom:'1px solid var(--bdr)'}}>
+              <span style={{color:'var(--txm)'}}>{n.name}</span>
+              <div style={{display:'flex',alignItems:'center',gap:6}}>
+                <span style={{fontFamily:'monospace',color:'var(--cyan)'}}>{n.url}</span>
+                <CopyBtn text={n.url}/>
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      <div className="card fi">
+        <SectionHdr icon={Shield} title="Security Status"/>
+        <div style={{marginTop:12,display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(200px,1fr))',gap:10}}>
+          {[
+            {label:'Consensus', value:'Bullshark DAG BFT', ok:true},
+            {label:'Signatures', value:'ML-DSA-65 (Post-Quantum)', ok:true},
+            {label:'Encryption', value:'ML-KEM-768 (Post-Quantum)', ok:true},
+            {label:'Bridge Mode', value:'Threshold Multi-Sig 2-of-3', ok:true},
+            {label:'Persistent Storage', value:'Render Disks (1GB/node)', ok:true},
+            {label:'State Sync', value:'Active (node2/node3)', ok:true},
+          ].map(item=>(
+            <div key={item.label} style={{padding:'10px 12px',background:'var(--bg)',borderRadius:8}}>
+              <div style={{fontSize:11,color:'var(--txl)',marginBottom:4}}>{item.label}</div>
+              <div style={{fontSize:12,fontWeight:600,color:item.ok?'var(--green)':'var(--red)',display:'flex',gap:6,alignItems:'center'}}>
+                {item.ok ? <CheckCircle2 size={12}/> : <AlertTriangle size={12}/>}
+                {item.value}
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────
+// DOCS PAGE
+// ─────────────────────────────────────────────
+function DocsPage() {
+  const [section, setSection] = useState('overview');
+  const sections = [
+    {id:'overview',    label:'Overview'},
+    {id:'wallet',      label:'Wallet & Keys'},
+    {id:'send',        label:'Send & Receive'},
+    {id:'staking',     label:'Staking'},
+    {id:'dex',         label:'DEX Trading'},
+    {id:'bridge',      label:'Bridge'},
+    {id:'governance',  label:'Governance'},
+    {id:'api',         label:'API Reference'},
+    {id:'security',    label:'Security'},
+  ];
+  return (
+    <div style={{display:'flex',gap:16,alignItems:'flex-start'}}>
+      <div className="card fi" style={{minWidth:160,position:'sticky',top:16}}>
+        <div style={{fontWeight:700,fontSize:12,color:'var(--txl)',marginBottom:10,letterSpacing:1}}>CONTENTS</div>
+        {sections.map(s=>(
+          <div key={s.id} onClick={()=>setSection(s.id)}
+            style={{padding:'7px 10px',borderRadius:6,cursor:'pointer',fontSize:13,
+              background:section===s.id?'var(--red)14':'transparent',
+              color:section===s.id?'var(--red)':'var(--txm)',fontWeight:section===s.id?700:400}}>
+            {s.label}
+          </div>
+        ))}
+      </div>
+      <div style={{flex:1,display:'flex',flexDirection:'column',gap:16}}>
+        {section==='overview' && (
+          <div className="card fi">
+            <h2 style={{fontFamily:'var(--acc)',fontSize:20,marginBottom:12}}>redflag.web3</h2>
+            <p style={{color:'var(--txm)',lineHeight:1.7,marginBottom:12}}>
+              RedFlag is a post-quantum blockchain using <b style={{color:'var(--fg)'}}>ML-DSA-65</b> signatures and <b style={{color:'var(--fg)'}}>ML-KEM-768</b> encryption — resistant to quantum computing attacks. It uses <b style={{color:'var(--fg)'}}>Bullshark DAG</b> BFT consensus for fast finality.
+            </p>
+            <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(160px,1fr))',gap:10,marginTop:8}}>
+              {[
+                {label:'Chain ID',     value:'2100'},
+                {label:'Consensus',    value:'Bullshark DAG BFT'},
+                {label:'Block Time',   value:'~200ms'},
+                {label:'Total Supply', value:'1.5B RF'},
+                {label:'Min Fee',      value:'1 RF'},
+                {label:'Min Stake',    value:'10,000 RF'},
+              ].map(i=>(
+                <div key={i.label} style={{padding:'10px 12px',background:'var(--bg)',borderRadius:8}}>
+                  <div style={{fontSize:11,color:'var(--txl)'}}>{i.label}</div>
+                  <div style={{fontSize:14,fontWeight:700,marginTop:4}}>{i.value}</div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+        {section==='wallet' && (
+          <div className="card fi">
+            <h2 style={{fontFamily:'var(--acc)',fontSize:18,marginBottom:12}}>Wallet & Keys</h2>
+            <div style={{display:'flex',flexDirection:'column',gap:14,color:'var(--txm)',lineHeight:1.7}}>
+              <div><b style={{color:'var(--fg)'}}>Key Type:</b> ML-DSA-65 (FIPS 204) — post-quantum signature scheme. Your address IS your public key (hex-encoded).</div>
+              <div><b style={{color:'var(--fg)'}}>Private Key:</b> Stored encrypted (AES-256-GCM) in your browser with your password. Never sent to any server.</div>
+              <div><b style={{color:'var(--fg)'}}>Recovery:</b> Export your wallet from Settings to get the encrypted keystore JSON. Save your mnemonic (24 words) as backup.</div>
+              <div style={{padding:'10px 14px',background:'var(--red)10',borderRadius:8,border:'1px solid var(--red)30'}}>
+                <b style={{color:'var(--red)'}}>⚠ Security:</b> Never share your private key or mnemonic. The team will never ask for them.
+              </div>
+            </div>
+          </div>
+        )}
+        {section==='send' && (
+          <div className="card fi">
+            <h2 style={{fontFamily:'var(--acc)',fontSize:18,marginBottom:12}}>Send & Receive RF</h2>
+            <div style={{display:'flex',flexDirection:'column',gap:12,color:'var(--txm)',lineHeight:1.7}}>
+              <div><b style={{color:'var(--fg)'}}>To receive:</b> Share your address (public key). It starts with a long hex string.</div>
+              <div><b style={{color:'var(--fg)'}}>To send:</b> Go to Wallet → Send. Enter recipient address, amount (min 1 RF), and fee (default 1 RF).</div>
+              <div><b style={{color:'var(--fg)'}}>Fees:</b> All fees go to the protocol fee pool, distributed to validators proportionally to their stake.</div>
+              <div><b style={{color:'var(--fg)'}}>Faucet:</b> Get 1,000 RF free from the faucet (once per 24h) to get started.</div>
+              <div><b style={{color:'var(--fg)'}}>Finality:</b> Transactions are finalized in the next committed DAG vertex (~200ms).</div>
+            </div>
+          </div>
+        )}
+        {section==='staking' && (
+          <div className="card fi">
+            <h2 style={{fontFamily:'var(--acc)',fontSize:18,marginBottom:12}}>Staking</h2>
+            <div style={{display:'flex',flexDirection:'column',gap:12,color:'var(--txm)',lineHeight:1.7}}>
+              <div><b style={{color:'var(--fg)'}}>Minimum stake:</b> 10,000 RF to become a validator.</div>
+              <div><b style={{color:'var(--fg)'}}>Rewards:</b> 1 RF per vertex + 0.1 RF per TX included. Plus proportional share of protocol fees.</div>
+              <div><b style={{color:'var(--fg)'}}>Unstake:</b> 10-round unbonding period (~2 seconds). After that, withdraw your RF back to your wallet.</div>
+              <div><b style={{color:'var(--fg)'}}>Slashing:</b> Malicious validators can be slashed (stake reduced) by governance vote.</div>
+              <div style={{padding:'10px 14px',background:'var(--cyan)10',borderRadius:8,border:'1px solid var(--cyan)30'}}>
+                <b style={{color:'var(--cyan)'}}>Tip:</b> Run your own node for maximum rewards. See the Node Setup guide.
+              </div>
+            </div>
+          </div>
+        )}
+        {section==='dex' && (
+          <div className="card fi">
+            <h2 style={{fontFamily:'var(--acc)',fontSize:18,marginBottom:12}}>DEX Trading</h2>
+            <div style={{display:'flex',flexDirection:'column',gap:12,color:'var(--txm)',lineHeight:1.7}}>
+              <div><b style={{color:'var(--fg)'}}>AMM:</b> Constant product (x·y=k), same model as Uniswap V2.</div>
+              <div><b style={{color:'var(--fg)'}}>Pairs:</b> All pairs are RF ↔ wrapped token (wETH, wBNB, wMATIC, wSOL, wAVAX, wARB, wBTC, wUSDC, wUSDT).</div>
+              <div><b style={{color:'var(--fg)'}}>Fee:</b> 0.3% per swap (30 bps), goes to the DEX fee pool then redistributed to LPs.</div>
+              <div><b style={{color:'var(--fg)'}}>Liquidity:</b> Provide liquidity to earn LP tokens and a share of swap fees.</div>
+              <div><b style={{color:'var(--fg)'}}>Slippage:</b> Set min_amount_out when swapping to protect against price movement.</div>
+            </div>
+          </div>
+        )}
+        {section==='bridge' && (
+          <div className="card fi">
+            <h2 style={{fontFamily:'var(--acc)',fontSize:18,marginBottom:12}}>Bridge</h2>
+            <div style={{display:'flex',flexDirection:'column',gap:12,color:'var(--txm)',lineHeight:1.7}}>
+              <div><b style={{color:'var(--fg)'}}>EVM → RF:</b> Lock ETH/BNB/MATIC in the bridge contract → bridge mints wETH/wBNB/wMATIC on redflag.web3.</div>
+              <div><b style={{color:'var(--fg)'}}>RF → EVM:</b> Burn wrapped tokens on RF → bridge releases native tokens on EVM.</div>
+              <div><b style={{color:'var(--fg)'}}>Security:</b> Threshold multi-sig: 2-of-3 nodes must approve each mint (ML-DSA signatures).</div>
+              <div><b style={{color:'var(--fg)'}}>Supported chains:</b> Ethereum, BSC, Polygon. More coming: Solana, Avalanche, Arbitrum.</div>
+              <div style={{display:'flex',flexDirection:'column',gap:6,marginTop:4}}>
+                {[
+                  {chain:'Ethereum', contract:'0x92E83A72b3CD6d699cc8F16D756d5f31aCF55659'},
+                  {chain:'BSC',      contract:'0x06436bf6E71964A99bD4078043aa4cDfA0eadEe6'},
+                  {chain:'Polygon',  contract:'0x19D2A913a6df973a7ad600F420960235307c6Cbf'},
+                ].map(b=>(
+                  <div key={b.chain} style={{display:'flex',justifyContent:'space-between',alignItems:'center',fontSize:12,padding:'6px 10px',background:'var(--bg)',borderRadius:6}}>
+                    <span style={{fontWeight:600}}>{b.chain}</span>
+                    <div style={{display:'flex',gap:6,alignItems:'center'}}>
+                      <code style={{fontSize:11,color:'var(--cyan)'}}>{b.contract}</code>
+                      <CopyBtn text={b.contract}/>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+        )}
+        {section==='governance' && (
+          <div className="card fi">
+            <h2 style={{fontFamily:'var(--acc)',fontSize:18,marginBottom:12}}>Governance</h2>
+            <div style={{display:'flex',flexDirection:'column',gap:12,color:'var(--txm)',lineHeight:1.7}}>
+              <div><b style={{color:'var(--fg)'}}>Voting power:</b> 1 RF staked = 1 vote. Must have active stake to propose or vote.</div>
+              <div><b style={{color:'var(--fg)'}}>Quorum:</b> 10% of total staked RF must participate for a proposal to pass.</div>
+              <div><b style={{color:'var(--fg)'}}>Voting period:</b> 100 rounds (~20 seconds). Vote before it expires.</div>
+              <div><b style={{color:'var(--fg)'}}>Governable params:</b> MinFee, MinStake, HalvingInterval, FeeBurnPercent, UnstakeDelay.</div>
+              <div><b style={{color:'var(--fg)'}}>Execution:</b> Passed proposals are executed automatically at round end.</div>
+            </div>
+          </div>
+        )}
+        {section==='api' && (
+          <div className="card fi">
+            <h2 style={{fontFamily:'var(--acc)',fontSize:18,marginBottom:12}}>API Reference</h2>
+            <div style={{display:'flex',flexDirection:'column',gap:8}}>
+              {[
+                {method:'GET',  path:'/status',               desc:'Node status (round, validators, mempool)'},
+                {method:'GET',  path:'/network/stats',        desc:'Full network statistics'},
+                {method:'GET',  path:'/balance/:address',     desc:'RF balance and nonce'},
+                {method:'GET',  path:'/history/:address',     desc:'Transaction history'},
+                {method:'POST', path:'/wallet/send',          desc:'Sign and submit a transaction'},
+                {method:'POST', path:'/wallet/faucet',        desc:'Request test RF (once/24h)'},
+                {method:'GET',  path:'/dex/pools',            desc:'List all DEX pools'},
+                {method:'POST', path:'/dex/swap',             desc:'Execute a swap'},
+                {method:'POST', path:'/dex/quote',            desc:'Get swap quote (no execution)'},
+                {method:'GET',  path:'/explorer/search/:q',  desc:'Search address, tx hash, vertex'},
+                {method:'GET',  path:'/staking/stakes',       desc:'All active validators'},
+                {method:'POST', path:'/staking/stake',        desc:'Stake RF to become validator'},
+                {method:'GET',  path:'/api/v1/ticker',        desc:'CoinGecko-compatible ticker'},
+                {method:'GET',  path:'/metrics',              desc:'Prometheus metrics'},
+                {method:'WS',   path:'/ws',                   desc:'Real-time events (new_block, new_tx, dex_swap…)'},
+              ].map(e=>(
+                <div key={e.path} style={{display:'flex',gap:10,alignItems:'flex-start',padding:'7px 0',borderBottom:'1px solid var(--bdr)',fontSize:12}}>
+                  <span style={{
+                    minWidth:45,fontWeight:700,fontSize:10,padding:'2px 6px',borderRadius:4,
+                    background:e.method==='GET'?'var(--cyan)20':e.method==='POST'?'var(--green)20':'var(--purple)20',
+                    color:e.method==='GET'?'var(--cyan)':e.method==='POST'?'var(--green)':'var(--purple)',
+                  }}>{e.method}</span>
+                  <code style={{color:'var(--fg)',minWidth:220,fontSize:11}}>{e.path}</code>
+                  <span style={{color:'var(--txm)'}}>{e.desc}</span>
+                </div>
+              ))}
+            </div>
+            <div style={{marginTop:16,padding:'10px 14px',background:'var(--bg)',borderRadius:8,fontSize:12}}>
+              <b>Base URLs:</b>
+              <div style={{fontFamily:'monospace',marginTop:6,color:'var(--cyan)'}}>https://redflagweb3-node1.onrender.com</div>
+            </div>
+          </div>
+        )}
+        {section==='security' && (
+          <div className="card fi">
+            <h2 style={{fontFamily:'var(--acc)',fontSize:18,marginBottom:12}}>Security</h2>
+            <div style={{display:'flex',flexDirection:'column',gap:12,color:'var(--txm)',lineHeight:1.7}}>
+              <div><b style={{color:'var(--fg)'}}>Post-Quantum:</b> ML-DSA-65 (FIPS 204) for signatures, ML-KEM-768 (FIPS 203) for threshold encryption. Quantum-resistant from day one.</div>
+              <div><b style={{color:'var(--fg)'}}>BFT Safety:</b> Bullshark DAG requires 2f+1 honest nodes (f = faulty). With 3 nodes, tolerates 1 Byzantine failure.</div>
+              <div><b style={{color:'var(--fg)'}}>Bridge security:</b> Threshold 2-of-3 multi-sig. Compromising 1 node is not enough to forge a mint.</div>
+              <div><b style={{color:'var(--fg)'}}>Rate limits:</b> 60 req/min per IP. Faucet: 24h cooldown per address.</div>
+              <div><b style={{color:'var(--fg)'}}>Supply cap:</b> Max 1 quadrillion units per token to prevent overflow exploits.</div>
+              <div><b style={{color:'var(--fg)'}}>Nonce protection:</b> Replay attacks prevented by strict nonce ordering.</div>
+              <div style={{padding:'10px 14px',background:'var(--cyan)10',borderRadius:8,border:'1px solid var(--cyan)30',marginTop:4}}>
+                Found a vulnerability? Report responsibly — join our community channel.
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────
 const PAGES = [
   {id:'wallet',     label:'Wallet',      icon:Wallet},
   {id:'dashboard',  label:'Dashboard',   icon:Activity},
@@ -1749,6 +2068,8 @@ const PAGES = [
   {id:'dex',        label:'DEX Trading', icon:TrendingUp},
   {id:'explorer',   label:'Explorer',    icon:Search},
   {id:'governance', label:'Governance',  icon:Users},
+  {id:'monitor',    label:'Monitoring',  icon:Cpu},
+  {id:'docs',       label:'Docs',        icon:FileCode},
   {id:'network',    label:'Network',     icon:Globe},
   {id:'settings',   label:'Settings',    icon:Settings},
 ];
@@ -1811,7 +2132,7 @@ export default function App() {
   if(!ks && !wallet)        return <Onboarding onComplete={w=>{ setWallet(w); setPage('wallet'); }}/>;
   if(ks  && !wallet)        return <LockScreen onUnlock={w=>{ setWallet(w); setPage('wallet'); }}/>;
 
-  const pageTitles = {wallet:'My Wallet',dashboard:'Dashboard',staking:'Staking',bridge:'Bridge',dex:'DEX Trading',explorer:'Block Explorer',network:'Network Info',settings:'Settings'};
+  const pageTitles = {wallet:'My Wallet',dashboard:'Dashboard',staking:'Staking',bridge:'Bridge',dex:'DEX Trading',explorer:'Block Explorer',governance:'Governance',monitor:'Monitoring',docs:'Documentation',network:'Network Info',settings:'Settings'};
 
   const navTo = id => { setPage(id); setSidebarOpen(false); };
 
@@ -1873,6 +2194,8 @@ export default function App() {
           {page==='dex'       && <DexPage       wallet={wallet} wsData={wsData}/>}
           {page==='explorer'  && <ExplorerPage  initialQuery={searchQuery} wsData={wsData}/>}
           {page==='governance'&& <GovernancePage wallet={wallet} wsData={wsData}/>}
+          {page==='monitor'   && <MonitoringPage/>}
+          {page==='docs'      && <DocsPage/>}
           {page==='network'   && <NetworkPage   stats={stats} online={online}/>}
           {page==='settings'  && <SettingsPage  wallet={wallet} onLogout={()=>{ setWallet(null); }}/>}
         </div>

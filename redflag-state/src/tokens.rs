@@ -10,7 +10,7 @@ use anyhow::Result;
 use serde::{Serialize, Deserialize};
 
 /// Tokens soportados en RedFlag (todos son wrapped, respaldados 1:1 por activos bloqueados en EVM)
-pub const SUPPORTED_TOKENS: &[&str] = &["wETH", "wBNB", "wMATIC", "wUSDC", "wUSDT"];
+pub const SUPPORTED_TOKENS: &[&str] = &["wETH", "wBNB", "wMATIC", "wUSDC", "wUSDT", "wSOL", "wAVAX", "wARB", "wBTC"];
 
 /// Precisión: 6 decimales para todos los wrapped tokens (1 wETH = 1_000_000 units)
 pub const TOKEN_DECIMALS: u64 = 1_000_000;

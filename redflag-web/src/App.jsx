@@ -1234,7 +1234,14 @@ const BRIDGE_CONTRACTS = {
   BSC:     { address: '0x06436bf6E71964A99bD4078043aa4cDfA0eadEe6', chainId: '0x38', name: 'BNB Chain',  symbol: 'BNB',  explorer: 'https://bscscan.com/tx/' },
   Polygon: { address: '0x19D2A913a6df973a7ad600F420960235307c6Cbf', chainId: '0x89', name: 'Polygon',  symbol: 'MATIC', explorer: 'https://polygonscan.com/tx/' },
 };
-const BRIDGE_SOON = ['Solana (wSOL)', 'Avalanche (wAVAX)', 'Arbitrum (wARB)', 'Bitcoin (wBTC)'];
+const BRIDGE_SOON = ['Avalanche (wAVAX)', 'Arbitrum (wARB)', 'Bitcoin (wBTC)'];
+const WRF_SOLANA = {
+  mint:    'DVqDKrWz8hXgpbjYYNi8sZ69mcQGX6HGDs3dmFk5jZni',
+  poolId:  '4jVaHDmwyLefySuQr1E7fQ86F2rh6zBEAM9xNiFLNBpn',
+  raydium: 'https://raydium.io/swap/?inputCurrency=sol&outputCurrency=DVqDKrWz8hXgpbjYYNi8sZ69mcQGX6HGDs3dmFk5jZni',
+  solscan: 'https://solscan.io/token/DVqDKrWz8hXgpbjYYNi8sZ69mcQGX6HGDs3dmFk5jZni',
+  birdeye: 'https://birdeye.so/token/DVqDKrWz8hXgpbjYYNi8sZ69mcQGX6HGDs3dmFk5jZni',
+};
 
 const LOCK_ABI = [{
   name: 'lock', type: 'function', stateMutability: 'payable',
@@ -1533,8 +1540,10 @@ function BridgePage({ wallet }) {
   const [txHash, setTxHash]   = useState('');
   const [loading, setLoading] = useState(false);
   const [mmAddr, setMmAddr]   = useState('');
+  const [solAddr, setSolAddr] = useState('');
 
-  const cfg = BRIDGE_CONTRACTS[chain];
+  const isSolana = chain === 'SOL';
+  const cfg = isSolana ? null : BRIDGE_CONTRACTS[chain];
 
   async function connectMeta() {
     if (!window.ethereum) { setStatus('MetaMask no detectado. Instálalo en metamask.io'); return; }
@@ -1542,6 +1551,16 @@ function BridgePage({ wallet }) {
       const accounts = await window.ethereum.request({ method: 'eth_requestAccounts' });
       setMmAddr(accounts[0]);
       setStatus('MetaMask conectado: ' + accounts[0].slice(0,10) + '…');
+    } catch (e) { setStatus('Error: ' + e.message); }
+  }
+
+  async function connectPhantom() {
+    const phantom = window.solana || window.phantom?.solana;
+    if (!phantom?.isPhantom) { setStatus('Phantom no detectado. Instálalo en phantom.app'); return; }
+    try {
+      const resp = await phantom.connect();
+      setSolAddr(resp.publicKey.toString());
+      setStatus('Phantom conectado: ' + resp.publicKey.toString().slice(0,10) + '…');
     } catch (e) { setStatus('Error: ' + e.message); }
   }
 
@@ -1585,81 +1604,139 @@ function BridgePage({ wallet }) {
     } finally { setLoading(false); }
   }
 
+  const allChains = [...Object.keys(BRIDGE_CONTRACTS), 'SOL'];
+  const chainLabel = { ETH:'ETH', BSC:'BNB', Polygon:'MATIC', SOL:'SOL' };
+
   return (
     <div style={{maxWidth:480,margin:'0 auto',display:'flex',flexDirection:'column',gap:16}}>
       <div className="card fi">
         <div style={{fontWeight:700,fontSize:16,marginBottom:4}}>🌉 Bridge → redflag.web3</div>
-        <div style={{fontSize:12,color:'var(--txl)'}}>Bloquea ETH/BNB/MATIC y recibe RF en tu wallet</div>
+        <div style={{fontSize:12,color:'var(--txl)'}}>Bloquea ETH/BNB/MATIC/SOL y recibe RF en tu wallet</div>
       </div>
 
       {/* Chain selector */}
       <div className="card fi" style={{gap:12}}>
         <div style={{fontSize:12,color:'var(--txl)',fontWeight:600}}>RED ORIGEN</div>
         <div style={{display:'flex',gap:8}}>
-          {Object.keys(BRIDGE_CONTRACTS).map(c=>(
-            <button key={c} onClick={()=>setChain(c)}
+          {allChains.map(c=>(
+            <button key={c} onClick={()=>{ setChain(c); setStatus(''); }}
               style={{flex:1,padding:'8px 4px',borderRadius:8,border:`1.5px solid ${chain===c?'var(--cyan)':'var(--bdr)'}`,
                 background:chain===c?'rgba(0,220,255,.08)':'transparent',color:chain===c?'var(--cyan)':'var(--txl)',
                 cursor:'pointer',fontSize:13,fontWeight:chain===c?700:400}}>
-              {BRIDGE_CONTRACTS[c].symbol}
+              {chainLabel[c] || c}
             </button>
           ))}
         </div>
-        <div style={{fontSize:11,color:'var(--txl)'}}>
-          Contrato: <span style={{fontFamily:'monospace'}}>{cfg.address.slice(0,18)}…</span>
-        </div>
+        {!isSolana && (
+          <div style={{fontSize:11,color:'var(--txl)'}}>
+            Contrato: <span style={{fontFamily:'monospace'}}>{cfg.address.slice(0,18)}…</span>
+          </div>
+        )}
+        {isSolana && (
+          <div style={{fontSize:11,color:'var(--txl)'}}>
+            Token wRF: <span style={{fontFamily:'monospace'}}>{WRF_SOLANA.mint.slice(0,18)}…</span>
+          </div>
+        )}
       </div>
 
-      {/* MetaMask */}
-      <div className="card fi" style={{gap:10}}>
-        <div style={{fontSize:12,color:'var(--txl)',fontWeight:600}}>METAMASK</div>
-        {mmAddr
-          ? <div style={{fontSize:12,color:'var(--green)'}}>✅ {mmAddr.slice(0,16)}…{mmAddr.slice(-6)}</div>
-          : <button className="btn" onClick={connectMeta} style={{width:'100%'}}>Conectar MetaMask</button>
-        }
-      </div>
-
-      {/* Inputs */}
-      <div className="card fi" style={{gap:12}}>
-        <div style={{fontSize:12,color:'var(--txl)',fontWeight:600}}>CANTIDAD ({cfg.symbol})</div>
-        <input className="inp" type="number" placeholder={`0.01 ${cfg.symbol}`} value={amount}
-          onChange={e=>setAmount(e.target.value)} min="0" step="0.001"/>
-        <div style={{fontSize:12,color:'var(--txl)',fontWeight:600}}>TU DIRECCIÓN RF (destino)</div>
-        <input className="inp" placeholder="Tu dirección redflag.web3" value={rfAddr}
-          onChange={e=>setRfAddr(e.target.value)} style={{fontFamily:'monospace',fontSize:11}}/>
-        <div style={{fontSize:11,color:'var(--txl)'}}>
-          Tu dirección RF: <span style={{fontFamily:'monospace',color:'var(--cyan)',cursor:'pointer'}}
-            onClick={()=>setRfAddr(wallet?.address||'')}>{wallet?.address ? short(wallet.address,12) : '—'} (click para usar)</span>
-        </div>
-      </div>
-
-      {/* Coming soon chains */}
-      <div className="card fi" style={{background:'var(--bg3)'}}>
-        <div style={{fontSize:12,color:'var(--txl)',fontWeight:600,marginBottom:8}}>PRÓXIMAMENTE</div>
-        <div style={{display:'flex',gap:6,flexWrap:'wrap'}}>
-          {BRIDGE_SOON.map(c=>(
-            <span key={c} style={{padding:'4px 10px',borderRadius:6,background:'var(--bg)',border:'1px solid var(--bdr)',fontSize:11,color:'var(--txl)'}}>{c}</span>
-          ))}
-        </div>
-      </div>
-
-      {/* Send */}
-      <button className="btn" onClick={doBridge} disabled={loading || !mmAddr}
-        style={{width:'100%',padding:'12px',fontSize:15,opacity:loading||!mmAddr?0.5:1}}>
-        {loading ? 'Procesando…' : `Enviar ${amount||'0'} ${cfg.symbol} → RF`}
-      </button>
-
-      {/* Status */}
-      {status && (
-        <div style={{background:'rgba(0,220,255,.06)',border:'1px solid var(--bdr)',borderRadius:8,padding:'10px 14px',fontSize:12,color:status.startsWith('✅')?'var(--green)':'var(--txl)'}}>
-          {status}
-          {txHash && (
-            <div style={{marginTop:6}}>
-              <a href={cfg.explorer + txHash} target="_blank" rel="noreferrer"
-                style={{color:'var(--cyan)',fontSize:11}}>Ver en explorer →</a>
+      {/* Solana panel */}
+      {isSolana && (
+        <>
+          <div className="card fi" style={{gap:10}}>
+            <div style={{fontSize:12,color:'var(--txl)',fontWeight:600}}>PHANTOM WALLET</div>
+            {solAddr
+              ? <div style={{fontSize:12,color:'var(--green)'}}>✅ {solAddr.slice(0,16)}…{solAddr.slice(-6)}</div>
+              : <button className="btn" onClick={connectPhantom} style={{width:'100%'}}>Conectar Phantom</button>
+            }
+          </div>
+          <div className="card fi" style={{gap:10}}>
+            <div style={{fontSize:13,fontWeight:700,marginBottom:4}}>wRF en Solana</div>
+            <div style={{fontSize:12,color:'var(--txl)',marginBottom:8}}>
+              wRF ya está disponible en Solana mainnet. Compra en Raydium con SOL y luego haz bridge a redflag.web3.
+            </div>
+            <div style={{display:'flex',flexDirection:'column',gap:8}}>
+              <a href={WRF_SOLANA.raydium} target="_blank" rel="noreferrer"
+                style={{display:'block',textAlign:'center',padding:'10px',borderRadius:8,
+                  background:'rgba(0,220,255,.12)',border:'1px solid var(--cyan)',
+                  color:'var(--cyan)',fontWeight:700,fontSize:13,textDecoration:'none'}}>
+                Comprar wRF en Raydium →
+              </a>
+              <div style={{display:'flex',gap:8}}>
+                <a href={WRF_SOLANA.birdeye} target="_blank" rel="noreferrer"
+                  style={{flex:1,textAlign:'center',padding:'7px',borderRadius:8,border:'1px solid var(--bdr)',
+                    color:'var(--txl)',fontSize:12,textDecoration:'none'}}>Birdeye</a>
+                <a href={WRF_SOLANA.solscan} target="_blank" rel="noreferrer"
+                  style={{flex:1,textAlign:'center',padding:'7px',borderRadius:8,border:'1px solid var(--bdr)',
+                    color:'var(--txl)',fontSize:12,textDecoration:'none'}}>Solscan</a>
+              </div>
+            </div>
+            <div style={{marginTop:4,padding:'8px 10px',borderRadius:6,background:'var(--bg)',fontSize:11,color:'var(--txl)'}}>
+              <div><b>Mint:</b> <span style={{fontFamily:'monospace'}}>{WRF_SOLANA.mint}</span></div>
+              <div><b>Pool:</b> <span style={{fontFamily:'monospace'}}>{WRF_SOLANA.poolId}</span></div>
+              <div><b>Fee:</b> 0.25% • <b>Par:</b> wRF/SOL</div>
+            </div>
+          </div>
+          {status && (
+            <div style={{background:'rgba(0,220,255,.06)',border:'1px solid var(--bdr)',borderRadius:8,
+              padding:'10px 14px',fontSize:12,color:status.startsWith('✅')?'var(--green)':'var(--txl)'}}>
+              {status}
             </div>
           )}
-        </div>
+        </>
+      )}
+
+      {/* EVM panel */}
+      {!isSolana && (
+        <>
+          <div className="card fi" style={{gap:10}}>
+            <div style={{fontSize:12,color:'var(--txl)',fontWeight:600}}>METAMASK</div>
+            {mmAddr
+              ? <div style={{fontSize:12,color:'var(--green)'}}>✅ {mmAddr.slice(0,16)}…{mmAddr.slice(-6)}</div>
+              : <button className="btn" onClick={connectMeta} style={{width:'100%'}}>Conectar MetaMask</button>
+            }
+          </div>
+
+          <div className="card fi" style={{gap:12}}>
+            <div style={{fontSize:12,color:'var(--txl)',fontWeight:600}}>CANTIDAD ({cfg.symbol})</div>
+            <input className="inp" type="number" placeholder={`0.01 ${cfg.symbol}`} value={amount}
+              onChange={e=>setAmount(e.target.value)} min="0" step="0.001"/>
+            <div style={{fontSize:12,color:'var(--txl)',fontWeight:600}}>TU DIRECCIÓN RF (destino)</div>
+            <input className="inp" placeholder="Tu dirección redflag.web3" value={rfAddr}
+              onChange={e=>setRfAddr(e.target.value)} style={{fontFamily:'monospace',fontSize:11}}/>
+            <div style={{fontSize:11,color:'var(--txl)'}}>
+              Tu dirección RF: <span style={{fontFamily:'monospace',color:'var(--cyan)',cursor:'pointer'}}
+                onClick={()=>setRfAddr(wallet?.address||'')}>{wallet?.address ? short(wallet.address,12) : '—'} (click para usar)</span>
+            </div>
+          </div>
+
+          {/* Coming soon chains */}
+          <div className="card fi" style={{background:'var(--bg3)'}}>
+            <div style={{fontSize:12,color:'var(--txl)',fontWeight:600,marginBottom:8}}>PRÓXIMAMENTE</div>
+            <div style={{display:'flex',gap:6,flexWrap:'wrap'}}>
+              {BRIDGE_SOON.map(c=>(
+                <span key={c} style={{padding:'4px 10px',borderRadius:6,background:'var(--bg)',border:'1px solid var(--bdr)',fontSize:11,color:'var(--txl)'}}>{c}</span>
+              ))}
+            </div>
+          </div>
+
+          <button className="btn" onClick={doBridge} disabled={loading || !mmAddr}
+            style={{width:'100%',padding:'12px',fontSize:15,opacity:loading||!mmAddr?0.5:1}}>
+            {loading ? 'Procesando…' : `Enviar ${amount||'0'} ${cfg.symbol} → RF`}
+          </button>
+
+          {/* Status */}
+          {status && (
+            <div style={{background:'rgba(0,220,255,.06)',border:'1px solid var(--bdr)',borderRadius:8,padding:'10px 14px',fontSize:12,color:status.startsWith('✅')?'var(--green)':'var(--txl)'}}>
+              {status}
+              {txHash && (
+                <div style={{marginTop:6}}>
+                  <a href={cfg.explorer + txHash} target="_blank" rel="noreferrer"
+                    style={{color:'var(--cyan)',fontSize:11}}>Ver en explorer →</a>
+                </div>
+              )}
+            </div>
+          )}
+        </>
       )}
     </div>
   );

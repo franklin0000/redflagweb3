@@ -11,7 +11,7 @@ RUN npm run build
 # ─────────────────────────────────────────────────────────────
 # Stage 2: Rust backend (with dependency caching)
 # ─────────────────────────────────────────────────────────────
-FROM rust:1.82-slim AS backend-builder
+FROM rust:1.88-slim AS backend-builder
 WORKDIR /app
 
 # System deps needed by aws-lc-rs + libp2p

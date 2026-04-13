@@ -41,3 +41,24 @@ services:
           name: redflagweb3-node1
           type: web
           property: host
+
+  # ── Solana Bridge Relayer ─────────────────────────────────────────────────
+  - type: worker
+    name: redflag-solana-bridge
+    runtime: node
+    region: ohio
+    plan: starter
+    rootDir: solana-bridge
+    buildCommand: npm install
+    startCommand: node bridge_relayer.mjs
+    envVars:
+      - key: BRIDGE_WALLET
+        value: 8b6m2Z8LiqQLpBT9d1q7r8BFJ1EoKUEXvhPz7mWJZUvF
+      - key: BRIDGE_MINT_SECRET
+        value: c022d1319bcd9b1d3ca769cebab77e68e2264109330b32482a97a9dd28f0fbb2
+      - key: RF_NODE_URL
+        value: https://redflagweb3-app.onrender.com
+      - key: SOLANA_RPC
+        value: https://solana.publicnode.com
+      - key: POLL_INTERVAL_MS
+        value: 15000

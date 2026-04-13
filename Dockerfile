@@ -17,6 +17,7 @@ WORKDIR /app
 # System deps needed by aws-lc-rs + libp2p
 RUN apt-get update && apt-get install -y --no-install-recommends \
     cmake clang git perl make build-essential pkg-config \
+    libssl-dev \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy workspace manifest + lockfile first for layer caching

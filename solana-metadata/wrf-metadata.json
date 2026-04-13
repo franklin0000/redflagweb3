@@ -1,0 +1,24 @@
+{
+  "name": "Wrapped RedFlag",
+  "symbol": "wRF",
+  "description": "Wrapped RedFlag (wRF) — native token of redflag.web3, a quantum-resistant Layer-1 blockchain using ML-DSA-65 + ML-KEM-768 post-quantum cryptography and Bullshark DAG BFT consensus. Max supply: 2,100,000,000 RF.",
+  "image": "https://ipfs.io/ipfs/bafybeifpj5dfx353gy4hi753xnnpn4rpklp7cpikk7bmjob4y6cdlusbeu",
+  "external_url": "https://redflagweb3-app.onrender.com",
+  "attributes": [
+    { "trait_type": "Chain", "value": "Solana" },
+    { "trait_type": "Type", "value": "Wrapped Token" },
+    { "trait_type": "Decimals", "value": "6" },
+    { "trait_type": "Native Chain", "value": "redflag.web3 (Chain ID 2100)" },
+    { "trait_type": "Consensus", "value": "Bullshark DAG BFT" },
+    { "trait_type": "Cryptography", "value": "ML-DSA-65 + ML-KEM-768" }
+  ],
+  "properties": {
+    "files": [
+      {
+        "uri": "https://ipfs.io/ipfs/bafybeifpj5dfx353gy4hi753xnnpn4rpklp7cpikk7bmjob4y6cdlusbeu",
+        "type": "image/png"
+      }
+    ],
+    "category": "fungible"
+  }
+}

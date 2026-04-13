@@ -1,8 +1,9 @@
 use serde::{Serialize, Deserialize};
 use sled::{Db, Tree};
 use std::sync::Arc;
-use redflag_core::{Transaction, CHAIN_ID, GENESIS_ADDRESS, FEE_POOL_ADDRESS, GENESIS_BALANCE, MAX_SUPPLY};
-use redflag_crypto::Verifier;
+use redflag_core::{Transaction, CHAIN_ID, GENESIS_ADDRESS, FEE_POOL_ADDRESS, GENESIS_BALANCE, MAX_SUPPLY,
+    StealthTx, RingTx, StealthKeyRegistration};
+use redflag_crypto::{Verifier, ring_verify, key_image_used};
 use rayon::prelude::*;
 use redflag_vm::ContractVm;
 
@@ -39,6 +40,10 @@ pub struct StateDB {
     pub staking: StakingState,
     pub governance: GovernanceState,
     pub oracle: OracleState,
+    /// Registro de claves stealth: address → StealthKeyRegistration
+    stealth_keys: Tree,
+    /// Key images usadas (anti doble gasto para ring TXs)
+    used_key_images: Tree,
 }
 
 impl StateDB {
@@ -74,7 +79,10 @@ impl StateDB {
         let vm_path = format!("{}_vm", path);
         let vm = ContractVm::new(&vm_path).ok();
 
-        let state = Self { db, tx_history, tx_index, tx_counter, vm, dex, tokens, staking, governance, oracle };
+        let stealth_keys    = db.open_tree("stealth_keys")?;
+        let used_key_images = db.open_tree("used_key_images")?;
+
+        let state = Self { db, tx_history, tx_index, tx_counter, vm, dex, tokens, staking, governance, oracle, stealth_keys, used_key_images };
         state.ensure_genesis()?;
         state.ensure_dex_pools()?;
         Ok(state)
@@ -388,6 +396,150 @@ impl StateDB {
             .unwrap_or(0) as usize;
         let fee_pool = self.get_balance(FEE_POOL_ADDRESS);
         StateStats { account_count, tx_count, fee_pool_balance: fee_pool }
+    }
+
+    // ── Privacy: Stealth Key Registry ────────────────────────────────────────
+
+    /// Registra la clave stealth pública de un usuario
+    pub fn register_stealth_key(&self, reg: &StealthKeyRegistration) -> anyhow::Result<()> {
+        // Verificar que la firma ML-DSA es válida
+        let pk_bytes = hex::decode(&reg.address)
+            .map_err(|e| anyhow::anyhow!("dirección inválida: {}", e))?;
+        let mut msg = reg.address.as_bytes().to_vec();
+        msg.extend_from_slice(&reg.ek_bytes);
+        msg.push(reg.view_tag);
+        Verifier::verify(&pk_bytes, &msg, &reg.signature)
+            .map_err(|_| anyhow::anyhow!("firma inválida en registro stealth"))?;
+
+        let bytes = postcard::to_allocvec(reg)?;
+        self.stealth_keys.insert(reg.address.as_bytes(), bytes)?;
+        log::info!("[stealth] clave registrada para {}", &reg.address[..8]);
+        Ok(())
+    }
+
+    /// Obtiene la clave stealth pública de una dirección
+    pub fn get_stealth_key(&self, address: &str) -> Option<StealthKeyRegistration> {
+        self.stealth_keys.get(address.as_bytes()).ok().flatten()
+            .and_then(|b| postcard::from_bytes::<StealthKeyRegistration>(&b).ok())
+    }
+
+    // ── Privacy: Stealth TX ──────────────────────────────────────────────────
+
+    /// Aplica una StealthTx: envía fondos a la one_time_address
+    pub fn apply_stealth_tx(&self, stx: &StealthTx) -> anyhow::Result<()> {
+        if stx.chain_id != CHAIN_ID {
+            anyhow::bail!("chain_id incorrecto");
+        }
+        // Verificar firma ML-DSA del remitente
+        let pk_bytes = hex::decode(&stx.sender)?;
+        let mut msg = stx.sender.as_bytes().to_vec();
+        msg.extend_from_slice(&stx.amount.to_be_bytes());
+        msg.extend_from_slice(&stx.fee.to_be_bytes());
+        msg.extend_from_slice(&stx.nonce.to_be_bytes());
+        msg.extend_from_slice(&stx.chain_id.to_be_bytes());
+        msg.extend_from_slice(&stx.kem_ciphertext);
+        Verifier::verify(&pk_bytes, &msg, &stx.signature)
+            .map_err(|_| anyhow::anyhow!("firma stealth inválida"))?;
+
+        let mut sender = self.get_account(&stx.sender).unwrap_or(Account { address: stx.sender.clone(), balance: 0, nonce: 0 });
+        if sender.nonce != stx.nonce {
+            anyhow::bail!("nonce incorrecto");
+        }
+        let total = stx.amount + stx.fee;
+        if sender.balance < total {
+            anyhow::bail!("balance insuficiente");
+        }
+
+        sender.balance -= total;
+        sender.nonce += 1;
+        let _ = self.save_account(&sender);
+
+        // Acreditar a la one_time_address
+        let mut recv = self.get_account(&stx.one_time_address).unwrap_or(Account { address: stx.one_time_address.clone(), balance: 0, nonce: 0 });
+        recv.balance += stx.amount;
+        let _ = self.save_account(&recv);
+
+        // Fee pool
+        let mut fp = self.get_account(FEE_POOL_ADDRESS).unwrap_or(Account { address: FEE_POOL_ADDRESS.to_string(), balance: 0, nonce: 0 });
+        fp.balance += stx.fee;
+        let _ = self.save_account(&fp);
+
+        log::info!("[stealth] {} → {} RF a one_time={}", &stx.sender[..8], stx.amount, &stx.one_time_address[..8]);
+        Ok(())
+    }
+
+    // ── Privacy: Ring TX ─────────────────────────────────────────────────────
+
+    /// Aplica una RingTx: transfiere desde un miembro anónimo del anillo
+    pub fn apply_ring_tx(&self, rtx: &RingTx) -> anyhow::Result<()> {
+        if rtx.chain_id != CHAIN_ID {
+            anyhow::bail!("chain_id incorrecto");
+        }
+
+        // Verificar ring signature
+        let sig = redflag_crypto::RingSignature {
+            ring:      rtx.ring_sig.ring.clone(),
+            key_image: rtx.ring_sig.key_image,
+            c0:        rtx.ring_sig.c0,
+            responses: rtx.ring_sig.responses.clone(),
+        };
+        let mut msg = rtx.receiver.as_bytes().to_vec();
+        msg.extend_from_slice(&rtx.amount.to_be_bytes());
+        msg.extend_from_slice(&rtx.fee.to_be_bytes());
+        msg.extend_from_slice(&rtx.chain_id.to_be_bytes());
+
+        if !ring_verify(&msg, &sig) {
+            anyhow::bail!("ring signature inválida");
+        }
+
+        // Verificar que la key_image no fue usada (previene doble gasto)
+        let ki_hex = hex::encode(rtx.ring_sig.key_image);
+        if self.used_key_images.get(ki_hex.as_bytes())?.is_some() {
+            anyhow::bail!("key_image ya usada — doble gasto detectado");
+        }
+
+        // Encontrar el saldo del anillo (suma de todos los miembros / usamos el mayor)
+        // Para ring TXs: el anillo es de UTXOs virtuales, se verifica que
+        // AL MENOS UN miembro tiene fondos suficientes
+        let ring_has_funds = rtx.ring_sig.ring.iter().any(|pk_bytes| {
+            let addr = hex::encode(pk_bytes);
+            self.get_balance(&addr) >= rtx.amount + rtx.fee
+        });
+        if !ring_has_funds {
+            anyhow::bail!("ningún miembro del anillo tiene fondos suficientes");
+        }
+
+        // Debitar del miembro con más fondos (práctica simplificada para v2.2)
+        // En v3.0: usar UTXO con commitments
+        let (payer_addr, payer_balance) = rtx.ring_sig.ring.iter()
+            .map(|pk_bytes| {
+                let addr = hex::encode(pk_bytes);
+                let bal = self.get_balance(&addr);
+                (addr, bal)
+            })
+            .max_by_key(|(_, b)| *b)
+            .ok_or_else(|| anyhow::anyhow!("anillo vacío"))?;
+
+        let mut payer = self.get_account(&payer_addr).unwrap_or(Account { address: payer_addr.clone(), balance: payer_balance, nonce: 0 });
+        payer.balance -= rtx.amount + rtx.fee;
+        payer.nonce += 1;
+        let _ = self.save_account(&payer);
+
+        // Acreditar al receptor
+        let mut recv = self.get_account(&rtx.receiver).unwrap_or(Account { address: rtx.receiver.clone(), balance: 0, nonce: 0 });
+        recv.balance += rtx.amount;
+        let _ = self.save_account(&recv);
+
+        // Fee pool
+        let mut fp = self.get_account(FEE_POOL_ADDRESS).unwrap_or(Account { address: FEE_POOL_ADDRESS.to_string(), balance: 0, nonce: 0 });
+        fp.balance += rtx.fee;
+        let _ = self.save_account(&fp);
+
+        // Marcar key_image como usada
+        self.used_key_images.insert(ki_hex.as_bytes(), &[1])?;
+
+        log::info!("[ring] anillo[{}] → {} RF a {}", rtx.ring_sig.ring.len(), rtx.amount, &rtx.receiver[..8]);
+        Ok(())
     }
 }
 

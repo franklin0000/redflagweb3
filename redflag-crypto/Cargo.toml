@@ -13,3 +13,7 @@ serde = { workspace = true }
 thiserror = { workspace = true }
 anyhow = { workspace = true }
 log = { workspace = true }
+blake3 = { workspace = true }
+curve25519-dalek = { workspace = true }
+rand = { workspace = true }
+hex = { workspace = true }

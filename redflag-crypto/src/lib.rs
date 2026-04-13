@@ -1,3 +1,11 @@
+pub mod stealth;
+pub mod ring;
+pub mod shamir;
+
+pub use stealth::{StealthPublicKey, StealthPayload, generate_stealth_keypair, create_stealth_output, scan_stealth_tx, derive_spend_key_seed};
+pub use ring::{RingKeyPair, RingSignature, ring_sign, ring_verify, key_image_used};
+pub use shamir::{SecretShare, split_secret, reconstruct_secret};
+
 pub use aws_lc_rs::{
     kem::{Ciphertext, DecapsulationKey, EncapsulationKey, ML_KEM_768},
     signature::{UnparsedPublicKey, KeyPair},

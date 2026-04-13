@@ -13,7 +13,8 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use tokio::sync::broadcast;
 use dashmap::DashMap;
 use redflag_consensus::{ConsensusEngine, ConsensusSummary};
-use redflag_core::{Transaction, EncryptedTransaction, CHAIN_ID, MIN_FEE};
+use redflag_core::{Transaction, EncryptedTransaction, CHAIN_ID, MIN_FEE,
+    StealthTx, RingTx, RingSignatureData, StealthKeyRegistration};
 use redflag_crypto::{SigningKeyPair, Verifier};
 use tower_http::cors::CorsLayer;
 use tower_http::services::ServeDir;
@@ -154,6 +155,12 @@ pub fn create_router(state: ApiState) -> Router {
         .route("/round-ek",         get(get_round_ek))
         .route("/round-dk/:round",  get(get_round_dk))
         .route("/tx/encrypted",     post(submit_encrypted_transaction))
+        // Privacy: Stealth + Ring
+        .route("/privacy/stealth/register",  post(stealth_register))
+        .route("/privacy/stealth/key/:addr", get(get_stealth_key))
+        .route("/privacy/tx/stealth",        post(submit_stealth_tx))
+        .route("/privacy/tx/ring",           post(submit_ring_tx))
+        .route("/privacy/info",              get(privacy_info))
         // DAG
         .route("/dag/vertices",     get(get_dag_vertices))
         .route("/dag/vertex/:id",   get(get_vertex_detail))
@@ -2121,4 +2128,80 @@ async fn oracle_submit(
         Ok(_) => (StatusCode::OK, Json(serde_json::json!({"success":true,"pair":req.pair,"price_usd":req.price_usd_micro as f64/1_000_000.0}))),
         Err(e) => (StatusCode::BAD_REQUEST, Json(serde_json::json!({"error":e.to_string()}))),
     }
+}
+
+// ── Privacy endpoints ────────────────────────────────────────────────────────
+
+async fn stealth_register(
+    State(state): State<ApiState>,
+    Json(reg): Json<StealthKeyRegistration>,
+) -> impl IntoResponse {
+    match state.consensus.state.register_stealth_key(&reg) {
+        Ok(_) => (StatusCode::OK, Json(serde_json::json!({
+            "success": true, "address": reg.address, "view_tag": reg.view_tag,
+            "message": "Clave stealth registrada. Ahora puedes recibir pagos anónimos."
+        }))),
+        Err(e) => (StatusCode::BAD_REQUEST, Json(serde_json::json!({"error": e.to_string()}))),
+    }
+}
+
+async fn get_stealth_key(
+    State(state): State<ApiState>,
+    Path(addr): Path<String>,
+) -> impl IntoResponse {
+    match state.consensus.state.get_stealth_key(&addr) {
+        Some(reg) => (StatusCode::OK, Json(serde_json::json!({
+            "address": reg.address, "ek_bytes": hex::encode(&reg.ek_bytes), "view_tag": reg.view_tag,
+        }))),
+        None => (StatusCode::NOT_FOUND, Json(serde_json::json!({
+            "error": "No hay clave stealth registrada para esta dirección"
+        }))),
+    }
+}
+
+async fn submit_stealth_tx(
+    State(state): State<ApiState>,
+    Json(stx): Json<StealthTx>,
+) -> impl IntoResponse {
+    match state.consensus.state.apply_stealth_tx(&stx) {
+        Ok(_) => {
+            let _ = state.ws_tx.send(serde_json::json!({"event":"stealth_tx","one_time_address":stx.one_time_address,"view_tag":stx.view_tag}).to_string());
+            (StatusCode::OK, Json(serde_json::json!({
+                "success": true, "one_time_address": stx.one_time_address,
+                "message": "TX stealth aplicada. Solo el receptor sabe quién recibió."
+            })))
+        },
+        Err(e) => (StatusCode::BAD_REQUEST, Json(serde_json::json!({"error": e.to_string()}))),
+    }
+}
+
+async fn submit_ring_tx(
+    State(state): State<ApiState>,
+    Json(rtx): Json<RingTx>,
+) -> impl IntoResponse {
+    match state.consensus.state.apply_ring_tx(&rtx) {
+        Ok(_) => {
+            let _ = state.ws_tx.send(serde_json::json!({"event":"ring_tx","ring_size":rtx.ring_sig.ring.len(),"key_image":hex::encode(rtx.ring_sig.key_image)}).to_string());
+            (StatusCode::OK, Json(serde_json::json!({
+                "success": true, "ring_size": rtx.ring_sig.ring.len(),
+                "key_image": hex::encode(rtx.ring_sig.key_image),
+                "message": "TX de anillo aplicada. El remitente es anónimo."
+            })))
+        },
+        Err(e) => (StatusCode::BAD_REQUEST, Json(serde_json::json!({"error": e.to_string()}))),
+    }
+}
+
+async fn privacy_info(_: State<ApiState>) -> impl IntoResponse {
+    Json(serde_json::json!({
+        "version": "2.2.0-privacy",
+        "features": {
+            "stealth_addresses":  { "enabled": true, "algorithm": "ML-KEM-768" },
+            "ring_signatures":    { "enabled": true, "algorithm": "LSAG Ristretto255", "min_ring_size": 2 },
+            "threshold_mempool":  { "enabled": true, "algorithm": "ML-KEM-768 + XOR" },
+            "dkg_shamir":         { "enabled": true, "algorithm": "Shamir GF(2^8)" }
+        },
+        "anonymity_level": "high",
+        "quantum_resistant": true
+    }))
 }

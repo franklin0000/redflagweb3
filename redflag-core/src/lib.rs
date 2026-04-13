@@ -1,6 +1,59 @@
 use serde::{Serialize, Deserialize};
 use std::time::{SystemTime, UNIX_EPOCH};
 
+// ── Tipos de TX anónimas ─────────────────────────────────────────────────────
+
+/// TX con stealth address: el receptor es una dirección de un solo uso
+/// derivada de ML-KEM. Solo el receptor puede saber que le corresponde.
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct StealthTx {
+    pub sender:         String,
+    pub amount:         u64,
+    pub fee:            u64,
+    pub nonce:          u64,
+    pub chain_id:       u64,
+    /// Ciphertext ML-KEM para que el receptor derive la one_time_address
+    pub kem_ciphertext: Vec<u8>,
+    /// Dirección de un solo uso = hex(blake3(shared||"rf_stealth_addr_v1"))[..40]
+    pub one_time_address: String,
+    /// Byte de filtro rápido para escaneo eficiente
+    pub view_tag:       u8,
+    /// Firma ML-DSA del remitente sobre (sender+amount+fee+nonce+chain_id+kem_ct)
+    pub signature:      Vec<u8>,
+    pub timestamp:      u64,
+}
+
+/// TX con ring signature: el remitente es uno de N posibles dentro del anillo.
+/// Nadie puede saber cuál firmó. key_image previene doble gasto.
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct RingTx {
+    pub receiver:       String,
+    pub amount:         u64,
+    pub fee:            u64,
+    pub chain_id:       u64,
+    /// Firma LSAG sobre el contenido de la TX
+    pub ring_sig:       RingSignatureData,
+    pub timestamp:      u64,
+}
+
+/// Serializable version of ring signature
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct RingSignatureData {
+    pub ring:       Vec<[u8; 32]>,   // claves públicas Ristretto del anillo
+    pub key_image:  [u8; 32],        // I = sk * H_p(pk) — detecta doble gasto
+    pub c0:         [u8; 32],        // desafío inicial
+    pub responses:  Vec<[u8; 32]>,   // respuestas por miembro
+}
+
+/// Registro de clave pública stealth: un usuario publica su EK para recibir pagos privados
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct StealthKeyRegistration {
+    pub address:    String,     // dirección redflag.web3 del usuario
+    pub ek_bytes:   Vec<u8>,    // ML-KEM-768 encapsulation key (1184 bytes)
+    pub view_tag:   u8,         // primer byte de blake3(ek_bytes)
+    pub signature:  Vec<u8>,    // firma ML-DSA del usuario (autentica la EK)
+}
+
 /// Chain ID único de redflag.web3 mainnet — evita replay attacks entre redes
 pub const CHAIN_ID: u64 = 2100;
 

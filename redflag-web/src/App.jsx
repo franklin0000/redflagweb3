@@ -2002,9 +2002,9 @@ function DocsPage() {
               {[
                 {label:'𝕏 Twitter',  href:'https://x.com/franff546758',          color:'var(--fg)'},
                 {label:'Telegram',   href:'https://t.me/redflag21blockchain',      color:'var(--cyan)'},
-                {label:'PancakeSwap',href:'https://pancakeswap.finance/swap?outputCurrency=0xC348059b15562d2AED65382130379C96185C4A71', color:'var(--green)'},
-                {label:'SushiSwap',  href:'https://app.sushi.com/swap?outputCurrency=0xf99129BEc6c189942A135f0Ee0FB0C87091CE51a', color:'var(--purple)'},
-                {label:'BscScan',    href:'https://bscscan.com/address/0xC348059b15562d2AED65382130379C96185C4A71', color:'var(--yellow)'},
+                {label:'PancakeSwap',href:'https://pancakeswap.finance/swap?outputCurrency=0x5b372790924C29cF3DcED4A5E03FF61D0aB11F4A', color:'var(--green)'},
+                {label:'SushiSwap',  href:'https://app.sushi.com/swap?outputCurrency=0x31A0eb3a6D72B677a464835BF1e3Ca9412AcA03C', color:'var(--purple)'},
+                {label:'BscScan',    href:'https://bscscan.com/address/0x5b372790924C29cF3DcED4A5E03FF61D0aB11F4A', color:'var(--yellow)'},
                 {label:'GitHub',     href:'https://github.com/franklin0000/redflagweb3', color:'var(--txm)'},
               ].map(l=>(
                 <a key={l.label} href={l.href} target="_blank" rel="noreferrer"
@@ -2037,12 +2037,12 @@ function DocsPage() {
             <div style={{marginTop:16,padding:'14px 16px',background:'var(--green)10',borderRadius:8,border:'1px solid var(--green)30'}}>
               <div style={{fontWeight:700,color:'var(--green)',marginBottom:8,fontSize:13}}>Buy wRF Now</div>
               <div style={{display:'flex',gap:10,flexWrap:'wrap'}}>
-                <a href="https://pancakeswap.finance/swap?outputCurrency=0xC348059b15562d2AED65382130379C96185C4A71"
+                <a href="https://pancakeswap.finance/swap?outputCurrency=0x5b372790924C29cF3DcED4A5E03FF61D0aB11F4A"
                   target="_blank" rel="noreferrer"
                   style={{padding:'8px 16px',background:'var(--green)',color:'#000',borderRadius:8,fontWeight:700,fontSize:13,textDecoration:'none'}}>
                   PancakeSwap (BNB)
                 </a>
-                <a href="https://app.sushi.com/swap?outputCurrency=0xf99129BEc6c189942A135f0Ee0FB0C87091CE51a"
+                <a href="https://app.sushi.com/swap?outputCurrency=0x31A0eb3a6D72B677a464835BF1e3Ca9412AcA03C"
                   target="_blank" rel="noreferrer"
                   style={{padding:'8px 16px',background:'var(--purple)',color:'#fff',borderRadius:8,fontWeight:700,fontSize:13,textDecoration:'none'}}>
                   SushiSwap (ETH)

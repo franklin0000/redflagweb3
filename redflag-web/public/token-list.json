@@ -24,7 +24,7 @@
     },
     {
       "chainId": 56,
-      "address": "0xC348059b15562d2AED65382130379C96185C4A71",
+      "address": "0x5b372790924C29cF3DcED4A5E03FF61D0aB11F4A",
       "symbol": "wRF",
       "name": "Wrapped RedFlag",
       "decimals": 6,
@@ -39,7 +39,7 @@
     },
     {
       "chainId": 1,
-      "address": "0xf99129BEc6c189942A135f0Ee0FB0C87091CE51a",
+      "address": "0x31A0eb3a6D72B677a464835BF1e3Ca9412AcA03C",
       "symbol": "wRF",
       "name": "Wrapped RedFlag",
       "decimals": 6,

@@ -1564,6 +1564,63 @@ function BridgePage({ wallet }) {
     } catch (e) { setStatus('Error: ' + e.message); }
   }
 
+  async function doSolanaBridge() {
+    const phantom = window.solana || window.phantom?.solana;
+    if (!phantom?.isPhantom) { setStatus('Instala Phantom'); return; }
+    if (!solAddr)             { setStatus('Conecta Phantom primero'); return; }
+    if (!rfAddr || rfAddr.length < 16) { setStatus('Dirección RF inválida'); return; }
+    const amtNum = parseFloat(amount);
+    if (!amount || isNaN(amtNum) || amtNum <= 0) { setStatus('Introduce una cantidad válida'); return; }
+
+    setLoading(true); setStatus('Preparando transacción…'); setTxHash('');
+    try {
+      // Importar librerías Solana desde CDN (cargadas inline para no añadir bundle)
+      const { Connection, PublicKey, Transaction, TransactionInstruction } = await import(
+        'https://esm.sh/@solana/web3.js@1.98.4'
+      );
+      const { getAssociatedTokenAddress, createTransferInstruction, TOKEN_2022_PROGRAM_ID } = await import(
+        'https://esm.sh/@solana/spl-token@0.4.14'
+      );
+
+      const MEMO_PROGRAM = new PublicKey('MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr');
+      const WRF_MINT_PK  = new PublicKey(WRF_SOLANA.mint);
+      const BRIDGE_PK    = new PublicKey('8b6m2Z8LiqQLpBT9d1q7r8BFJ1EoKUEXvhPz7mWJZUvF');
+      const userPK       = new PublicKey(solAddr);
+
+      const conn = new Connection('https://solana.publicnode.com', 'confirmed');
+
+      // ATAs
+      const userAta   = await getAssociatedTokenAddress(WRF_MINT_PK, userPK,    false, TOKEN_2022_PROGRAM_ID);
+      const bridgeAta = await getAssociatedTokenAddress(WRF_MINT_PK, BRIDGE_PK, false, TOKEN_2022_PROGRAM_ID);
+
+      // Cantidad en micro-wRF (6 decimales)
+      const microWrf = BigInt(Math.round(amtNum * 1_000_000));
+
+      // Instrucción transferencia wRF
+      const transferIx = createTransferInstruction(
+        userAta, bridgeAta, userPK, microWrf, [], TOKEN_2022_PROGRAM_ID
+      );
+
+      // Instrucción memo con dirección RF destino
+      const memoIx = new TransactionInstruction({
+        keys: [],
+        programId: MEMO_PROGRAM,
+        data: Buffer.from(rfAddr, 'utf8'),
+      });
+
+      const { blockhash } = await conn.getLatestBlockhash();
+      const tx = new Transaction({ recentBlockhash: blockhash, feePayer: userPK });
+      tx.add(transferIx, memoIx);
+
+      setStatus('Confirmando en Phantom…');
+      const { signature } = await phantom.signAndSendTransaction(tx);
+      setTxHash(signature);
+      setStatus('✅ TX enviada. El bridge acreditará RF en ~1-2 min.');
+    } catch (e) {
+      setStatus('Error: ' + (e.message || JSON.stringify(e)));
+    } finally { setLoading(false); }
+  }
+
   async function switchChain() {
     try {
       await window.ethereum.request({ method: 'wallet_switchEthereumChain', params: [{ chainId: cfg.chainId }] });
@@ -1649,37 +1706,51 @@ function BridgePage({ wallet }) {
               : <button className="btn" onClick={connectPhantom} style={{width:'100%'}}>Conectar Phantom</button>
             }
           </div>
-          <div className="card fi" style={{gap:10}}>
-            <div style={{fontSize:13,fontWeight:700,marginBottom:4}}>wRF en Solana</div>
-            <div style={{fontSize:12,color:'var(--txl)',marginBottom:8}}>
-              wRF ya está disponible en Solana mainnet. Compra en Raydium con SOL y luego haz bridge a redflag.web3.
-            </div>
-            <div style={{display:'flex',flexDirection:'column',gap:8}}>
-              <a href={WRF_SOLANA.raydium} target="_blank" rel="noreferrer"
-                style={{display:'block',textAlign:'center',padding:'10px',borderRadius:8,
-                  background:'rgba(0,220,255,.12)',border:'1px solid var(--cyan)',
-                  color:'var(--cyan)',fontWeight:700,fontSize:13,textDecoration:'none'}}>
-                Comprar wRF en Raydium →
-              </a>
-              <div style={{display:'flex',gap:8}}>
-                <a href={WRF_SOLANA.birdeye} target="_blank" rel="noreferrer"
-                  style={{flex:1,textAlign:'center',padding:'7px',borderRadius:8,border:'1px solid var(--bdr)',
-                    color:'var(--txl)',fontSize:12,textDecoration:'none'}}>Birdeye</a>
-                <a href={WRF_SOLANA.solscan} target="_blank" rel="noreferrer"
-                  style={{flex:1,textAlign:'center',padding:'7px',borderRadius:8,border:'1px solid var(--bdr)',
-                    color:'var(--txl)',fontSize:12,textDecoration:'none'}}>Solscan</a>
+
+          {solAddr && (
+            <div className="card fi" style={{gap:12}}>
+              <div style={{fontSize:12,color:'var(--txl)',fontWeight:600}}>CANTIDAD wRF</div>
+              <input className="inp" type="number" placeholder="100 wRF" value={amount}
+                onChange={e=>setAmount(e.target.value)} min="0" step="1"/>
+              <div style={{fontSize:12,color:'var(--txl)',fontWeight:600}}>TU DIRECCIÓN RF (destino)</div>
+              <input className="inp" placeholder="Tu dirección redflag.web3" value={rfAddr}
+                onChange={e=>setRfAddr(e.target.value)} style={{fontFamily:'monospace',fontSize:11}}/>
+              <div style={{fontSize:11,color:'var(--txl)'}}>
+                <span style={{fontFamily:'monospace',color:'var(--cyan)',cursor:'pointer'}}
+                  onClick={()=>setRfAddr(wallet?.address||'')}>{wallet?.address ? short(wallet.address,12) : '—'} (click para usar)</span>
               </div>
+              <button className="btn" onClick={doSolanaBridge} disabled={loading||!solAddr}
+                style={{width:'100%',padding:'12px',fontSize:15,opacity:loading||!solAddr?0.5:1}}>
+                {loading ? 'Procesando…' : `Enviar ${amount||'0'} wRF → RF`}
+              </button>
             </div>
-            <div style={{marginTop:4,padding:'8px 10px',borderRadius:6,background:'var(--bg)',fontSize:11,color:'var(--txl)'}}>
-              <div><b>Mint:</b> <span style={{fontFamily:'monospace'}}>{WRF_SOLANA.mint}</span></div>
-              <div><b>Pool:</b> <span style={{fontFamily:'monospace'}}>{WRF_SOLANA.poolId}</span></div>
-              <div><b>Fee:</b> 0.25% • <b>Par:</b> wRF/SOL</div>
+          )}
+
+          <div className="card fi" style={{gap:8,background:'var(--bg3)'}}>
+            <div style={{fontSize:12,fontWeight:700,marginBottom:2}}>💡 ¿No tienes wRF?</div>
+            <a href={WRF_SOLANA.raydium} target="_blank" rel="noreferrer"
+              style={{display:'block',textAlign:'center',padding:'9px',borderRadius:8,
+                background:'rgba(0,220,255,.12)',border:'1px solid var(--cyan)',
+                color:'var(--cyan)',fontWeight:700,fontSize:13,textDecoration:'none'}}>
+              Comprar wRF en Raydium →
+            </a>
+            <div style={{display:'flex',gap:6,marginTop:2}}>
+              <a href={WRF_SOLANA.birdeye} target="_blank" rel="noreferrer"
+                style={{flex:1,textAlign:'center',padding:'6px',borderRadius:6,border:'1px solid var(--bdr)',
+                  color:'var(--txl)',fontSize:11,textDecoration:'none'}}>Birdeye</a>
+              <a href={WRF_SOLANA.solscan} target="_blank" rel="noreferrer"
+                style={{flex:1,textAlign:'center',padding:'6px',borderRadius:6,border:'1px solid var(--bdr)',
+                  color:'var(--txl)',fontSize:11,textDecoration:'none'}}>Solscan</a>
             </div>
           </div>
+
           {status && (
             <div style={{background:'rgba(0,220,255,.06)',border:'1px solid var(--bdr)',borderRadius:8,
               padding:'10px 14px',fontSize:12,color:status.startsWith('✅')?'var(--green)':'var(--txl)'}}>
               {status}
+              {txHash && <div style={{marginTop:4,fontFamily:'monospace',fontSize:10,wordBreak:'break-all'}}>
+                Tx Solana: {txHash}
+              </div>}
             </div>
           )}
         </>

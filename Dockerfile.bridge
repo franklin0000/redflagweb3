@@ -1,5 +1,6 @@
 # ─────────────────────────────────────────────────────────────
 # RedFlag Bridge Relayer — Dockerfile
+# redflag-bridge es un workspace independiente del principal
 # ─────────────────────────────────────────────────────────────
 FROM rust:1.88-slim AS builder
 WORKDIR /app
@@ -8,41 +9,17 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     cmake clang git perl make build-essential pkg-config \
     && rm -rf /var/lib/apt/lists/*
 
-COPY Cargo.toml Cargo.lock ./
+# Copiar el workspace del bridge (independiente)
+COPY redflag-bridge/Cargo.toml redflag-bridge/Cargo.lock* ./
 
-# Stub sources for dep caching
-RUN mkdir -p redflag-core/src redflag-crypto/src redflag-state/src \
-             redflag-consensus/src redflag-network/src redflag-cli/src \
-             redflag-vm/src redflag-bridge/src \
-    && echo '' | tee \
-        redflag-core/src/lib.rs redflag-crypto/src/lib.rs \
-        redflag-state/src/lib.rs redflag-consensus/src/lib.rs \
-        redflag-vm/src/lib.rs redflag-network/src/lib.rs \
-    && echo 'fn main(){}' | tee \
-        redflag-network/src/main.rs redflag-cli/src/main.rs redflag-bridge/src/main.rs
+# Stub para cachear dependencias
+RUN mkdir -p src && echo 'fn main(){}' > src/main.rs
+RUN cargo build --release 2>/dev/null || true
+RUN rm -rf src
 
-COPY redflag-core/Cargo.toml       redflag-core/
-COPY redflag-crypto/Cargo.toml     redflag-crypto/
-COPY redflag-state/Cargo.toml      redflag-state/
-COPY redflag-consensus/Cargo.toml  redflag-consensus/
-COPY redflag-network/Cargo.toml    redflag-network/
-COPY redflag-cli/Cargo.toml        redflag-cli/
-COPY redflag-vm/Cargo.toml         redflag-vm/
-COPY redflag-bridge/Cargo.toml     redflag-bridge/
-
-RUN cargo build --release -p redflag-bridge 2>/dev/null || true
-RUN find target/release -name "libredflag*" -delete 2>/dev/null || true
-
-COPY redflag-core/src        redflag-core/src
-COPY redflag-crypto/src      redflag-crypto/src
-COPY redflag-state/src       redflag-state/src
-COPY redflag-consensus/src   redflag-consensus/src
-COPY redflag-network/src     redflag-network/src
-COPY redflag-cli/src         redflag-cli/src
-COPY redflag-vm/src          redflag-vm/src
-COPY redflag-bridge/src      redflag-bridge/src
-
-RUN cargo build --release -p redflag-bridge
+# Copiar fuentes reales y compilar
+COPY redflag-bridge/src ./src
+RUN cargo build --release
 
 # ── Final image ───────────────────────────────────────────────
 FROM debian:bookworm-slim

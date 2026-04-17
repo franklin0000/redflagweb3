@@ -13,11 +13,19 @@
  *   POLL_INTERVAL_MS       — intervalo de polling (default: 15000)
  */
 
+import { createServer } from 'http';
 import { Connection, PublicKey } from '@solana/web3.js';
 import { TOKEN_2022_PROGRAM_ID, getAssociatedTokenAddress } from '@solana/spl-token';
 import { createRequire } from 'module';
 const require = createRequire(import.meta.url);
 const bs58   = require('bs58');
+
+// ── Health server (required by Render to confirm service is up) ───────────────
+const PORT = process.env.PORT || 10000;
+createServer((req, res) => {
+  res.writeHead(200, { 'Content-Type': 'application/json' });
+  res.end(JSON.stringify({ status: 'ok', service: 'redflag-solana-bridge' }));
+}).listen(PORT, () => console.log(`Health server listening on port ${PORT}`));
 
 // ── Config ────────────────────────────────────────────────────────────────────
 
